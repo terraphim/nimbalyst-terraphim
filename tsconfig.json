@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/role-storage.ts",
+    "src/source.ts",
+    "tests/recovery/*.ts",
+    "playwright.config.ts",
+    "src/recovery.ts",
+    "src/controller.ts",
+    "src/frame.ts",
+    "src/frame-bootstrap.ts"
+  ]
+}

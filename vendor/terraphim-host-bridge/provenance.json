@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/terraphim/terraphim-editor",
+  "commit": "25ad3b16a1bebab6edd767a7efd1ace7b25c82ad",
+  "sourceUrl": "https://raw.githubusercontent.com/terraphim/terraphim-editor/25ad3b16a1bebab6edd767a7efd1ace7b25c82ad/public/js/host-session.js",
+  "sha256": "9e5efc4c3f1f2003cd86f05b266b6666e546c68a065eaca67c897c2328a09388",
+  "status": "Unchanged pinned public source dependency; not part of the RC2 browser archive.",
+  "licenseUrl": "https://raw.githubusercontent.com/terraphim/terraphim-editor/25ad3b16a1bebab6edd767a7efd1ace7b25c82ad/LICENSE",
+  "licenseSHA256": "7ad7e63da830f2fb4819007d455f54374b018bea38ef2e12c538cf8ac2892b76"
+}

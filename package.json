@@ -1,0 +1,20 @@
+{
+  "name": "nimbalyst-terraphim-recovery",
+  "version": "0.0.0-recovery",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:recovery": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && playwright test",
+    "prepare:recovery-assets": "node scripts/prepare-recovery-assets.mjs",
+    "test:source": "node scripts/prepare-contract-tests.mjs && node --test tests/node/*.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.0.0",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@nimbalyst/extension-sdk": "0.7.0"
+  }
+}

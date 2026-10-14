@@ -1,0 +1,4 @@
+# Preserve exact historical source and raw command-output bytes.
+docs/recovery/**/*.log -whitespace
+tests/role-storage.browser.test.ts -whitespace
+* text=auto eol=lf
