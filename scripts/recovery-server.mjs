@@ -9,7 +9,7 @@ const mime={'.js':'text/javascript','.css':'text/css','.json':'application/json'
 const server=http.createServer(async(req,res)=>{
  try {
   const pathname=decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname);
-  const mounts=[['/vendor/','.cache/released-editor'],['/contracts/','.cache/contracts'],['/src/','src'],['/tests/recovery/','tests/recovery']];
+  const mounts=[['/.cache/contracts/','.cache/contracts'],['/vendor/','.cache/released-editor'],['/contracts/','.cache/contracts'],['/src/','src'],['/tests/recovery/','tests/recovery']];
   const mount=mounts.filter(([prefix])=>pathname.startsWith(prefix))[0];
   if(!mount) {res.writeHead(404).end();return;}
   const [prefix,directory]=mount,base=await realpath(resolve(root,directory));

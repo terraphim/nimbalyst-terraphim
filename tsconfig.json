@@ -26,6 +26,7 @@
     "src/frame-bootstrap.ts",
     "src/exports.ts",
     "src/visual.ts",
-    "src/controls.ts"
+    "src/controls.ts",
+    "src/opaque-installer.ts"
   ]
 }

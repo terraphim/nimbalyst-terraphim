@@ -1,3 +1,4 @@
+import './prepare-opaque-installer.mjs';
 // Source-component fixture builder; future release packaging must bind these app bytes in its CI manifest.
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
