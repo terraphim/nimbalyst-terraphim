@@ -1,6 +1,6 @@
 /** Reconstructed opaque transport. Visual editor shell and native CSP remain separate gates. */
 import type {DraftSelection} from './recovery.ts';
-import {sourceBytes} from './source.ts';
+import {sourceBytes,sha256Utf8} from './source.ts';
 import {verifyVisualAssets,type VisualAssets,type VisualManifest} from './visual.ts';
 import type {ParentController,Envelope,Proposal,SaveReceipt} from './controller.ts';
 export const FRAME_ASSET_NAMES=['bootstrap','source','engineGlue','engineWasm','hostBridge'] as const;
@@ -47,11 +47,14 @@ function opaqueInstaller(nonce:string):void {
 }
 interface HostSave {token:string;promise:Promise<SaveReceipt>;resolve:(receipt:SaveReceipt)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;generation:number;scheduled:boolean;refused:Error|null}
 interface HostRestore {token:string;selection:DraftSelection;promise:Promise<Envelope>;resolve:(receipt:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;receipt:Envelope|null}
+/** Captured text for explicit copying; acceptedRevision does not make it a saved/ACKed source. */
+export interface CurrentDraft {resource:string;session:string;acceptedRevision:number;source:string;sourceHash:string}
+interface DraftRead {requestId:string;resource:string;session:string;promise:Promise<CurrentDraft>;resolve:(value:CurrentDraft)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}
 /** One owned sandbox, private port, bounded latest proposal and one explicit Save barrier. */
 export class FrameTransport {
  readonly element:HTMLIFrameElement;readonly epoch=crypto.randomUUID();
  private port:MessagePort|null=null;private disposed=false;private initialized=false;private started=false;private busy=false;private lastId=0;
- private hostSave:HostSave|null=null;private hostRestore:HostRestore|null=null;
+ private hostSave:HostSave|null=null;private hostRestore:HostRestore|null=null;private draftRead:DraftRead|null=null;
  private options:FrameOptions;private readyListener:((event:MessageEvent)=>void)|null=null;private startupTimer:ReturnType<typeof setTimeout>|null=null;private ownerTimer:ReturnType<typeof setInterval>|null=null;
  private rejectStart:((error:Error)=>void)|null=null;private abortListener:()=>void;
  private constructor(options:FrameOptions){this.options=options;this.element=document.createElement('iframe');this.element.title='Terraphim editor';this.element.setAttribute('sandbox','allow-scripts');this.abortListener=()=>this.dispose();}
@@ -132,6 +135,16 @@ export class FrameTransport {
   if(this.hostSave!==pending)return;clearTimeout(pending.timer);this.hostSave=null;
   if(error)pending.reject(error);else if(receipt&&!pending.timedOut)pending.resolve(receipt);
  }
+ /** Read-only capture remains reachable when recovery storage or normal editing is blocked. */
+ readDraft():Promise<CurrentDraft>{
+  if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
+  if(this.draftRead)return this.draftRead.promise;
+  let snapshot:Envelope;try{snapshot=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
+  let resolve!:(value:CurrentDraft)=>void,reject!:(error:Error)=>void;const promise=new Promise<CurrentDraft>((yes,no)=>{resolve=yes;reject=no});
+  const pending:DraftRead={requestId:crypto.randomUUID(),resource:snapshot.resource,session:snapshot.session,promise,resolve,reject,timer:setTimeout(()=>this.finishDraftRead(pending,undefined,Error('Current draft read timed out')),this.options.requestTimeoutMs??30000)};
+  this.draftRead=pending;this.reply({type:'host-read-draft',protocol:1,requestId:pending.requestId,resource:pending.resource,session:pending.session});return promise;
+ }
+ private finishDraftRead(pending:DraftRead,value?:CurrentDraft,error?:Error):void {if(this.draftRead!==pending)return;clearTimeout(pending.timer);this.draftRead=null;if(error)pending.reject(error);else if(value)pending.resolve(value);}
  /** Explicit restoration flushes/fixes the owned frame before changing its dirty buffer. */
  restoreDraft(selection:DraftSelection,choice:{confirmed:boolean}):Promise<Envelope>{
   if(choice?.confirmed!==true)return Promise.reject(Error('Recovery restoration needs explicit confirmation'));
@@ -148,6 +161,15 @@ export class FrameTransport {
  }
  private async receive(message:Record<string,unknown>):Promise<void>{
   if(!this.current()){this.dispose();return;}
+  if(message.type==='draft-snapshot'||message.type==='draft-read-refused'){
+   const pending=this.draftRead;if(!pending||message.protocol!==1||message.requestId!==pending.requestId||message.resource!==pending.resource||message.session!==pending.session)return;
+   try{
+    if(message.type==='draft-read-refused'){if(Object.keys(message).sort().join()!=='frameEpoch,protocol,reason,requestId,resource,session,type'||typeof message.reason!=='string'||message.reason.length>256)throw Error('Invalid draft refusal');this.finishDraftRead(pending,undefined,Error(message.reason));return;}
+    if(Object.keys(message).sort().join()!=='acceptedRevision,frameEpoch,protocol,requestId,resource,session,source,type'||!Number.isSafeInteger(message.acceptedRevision)||(message.acceptedRevision as number)<0)throw Error('Invalid draft snapshot');
+    sourceBytes(message.source as string);const sourceHash=await sha256Utf8(message.source as string);if(!this.current()){this.dispose();return;}
+    this.finishDraftRead(pending,{resource:pending.resource,session:pending.session,acceptedRevision:message.acceptedRevision as number,source:message.source as string,sourceHash});
+   }catch(error){this.finishDraftRead(pending,undefined,error instanceof Error?error:Error('Invalid draft snapshot'))}return;
+  }
   if(message.type==='host-restore-refused'||message.type==='host-restore-applied'){
    const pending=this.hostRestore;if(!pending)return;const snapshot=this.options.controller.snapshot();
    if(message.protocol!==1||message.resource!==snapshot.resource||message.session!==snapshot.session||message.token!==pending.token)return;
@@ -187,7 +209,7 @@ export class FrameTransport {
  /** Explicit owner synchronization; blocking states never replace an unsaved frame draft. */
  synchronize():void {if(!this.current()){this.dispose();throw Error('Frame disposed');}const state=this.options.controller.state();if(['conflict','uncertain','recovery_pending'].includes(state.mode)||state.error==='host_state_failed'){this.reply({type:'transport-error',reason:state.error==='host_state_failed'?state.error:state.mode,id:null});return;}this.reply({...this.options.controller.snapshot(),type:'sync'});}
  dispose():void {
-  if(this.disposed)return;this.disposed=true;if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
+  if(this.disposed)return;this.disposed=true;if(this.draftRead)this.finishDraftRead(this.draftRead,undefined,Error('Frame disposed'));if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
   this.options.signal?.removeEventListener('abort',this.abortListener);if(this.readyListener)removeEventListener('message',this.readyListener);this.readyListener=null;
   try{this.port?.postMessage(serializeFrameControl({type:'dispose',frameEpoch:this.epoch}));}catch{}this.port?.close();this.port=null;this.element.remove();this.options.controller.dispose();this.rejectStart?.(Error('Frame disposed'));this.rejectStart=null;
  }
