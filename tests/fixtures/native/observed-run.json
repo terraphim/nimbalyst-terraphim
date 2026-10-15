@@ -1,0 +1,20 @@
+{
+  "source": "Observed public GitHub API response, retained fields only",
+  "run": {
+    "head_sha": "08637cf5c8cf8d35ce53ee973bb0bc2cb690d9ce",
+    "head_branch": "main",
+    "event": "push",
+    "conclusion": "success",
+    "status": "completed",
+    "path": ".github/workflows/component-ci.yml",
+    "repository": {
+      "full_name": "terraphim/nimbalyst-terraphim"
+    }
+  },
+  "artifact": {
+    "id": 11969410335,
+    "name": "component-evidence-windows-2025-08637cf5c8cf8d35ce53ee973bb0bc2cb690d9ce",
+    "expired": false,
+    "digest": "sha256:8638fd2598ae00c89e83fa71f1f62c6411528b71f72eb9054753860fa9d128c5"
+  }
+}
