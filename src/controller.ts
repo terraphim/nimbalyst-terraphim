@@ -25,7 +25,7 @@ export class ParentController {
  private readonly host:ControllerHost;private readonly options:ControllerOptions;private readonly rust:RustSession;
  private readonly identity:SourceSnapshot['identity'];private accepted:Envelope;private persisted:SourceSnapshot;
  private pendingSource:string|null=null;private draft:DraftRecord|null=null;
- private restoring:Promise<Envelope>|null=null;
+ private restoring:Promise<Envelope>|null=null;private reloading:Promise<Envelope>|null=null;
  private accepting:Promise<Envelope>|null=null;private saving:Promise<void>|null=null;private publicSave:Promise<SaveReceipt>|null=null;
  private saveQueued=false;private timedOut=false;private capturedSave:Envelope|null=null;private observing:Promise<void>|null=null;private observationGeneration=0;private observeQueued=false;
  private unsubscribers:Array<()=>void>=[];
@@ -55,7 +55,7 @@ export class ParentController {
   if(id.workspace!==this.identity.workspace||id.resource!==this.identity.resource)throw new ControllerError('stale');
  }
  private readable():SourceReadOptions {const epoch=this.epoch;return{supports:this.options.supports,isCurrent:()=>!this.closed&&this.options.isCurrent()&&epoch===this.epoch&&this.host.filePath===this.identity.resource&&this.host.workspaceId===this.identity.workspace};}
- private editable():void {this.guard();if(this.restoring)throw new ControllerError('busy');if(this.conflicted())throw new ControllerError('conflict');if(this.mode==='recovery_pending'||this.mode==='uncertain')throw new ControllerError(this.mode);if(this.error==='host_state_failed')throw new ControllerError(this.error);}
+ private editable():void {this.guard();if(this.restoring||this.reloading)throw new ControllerError('busy');if(this.conflicted())throw new ControllerError('conflict');if(this.mode==='recovery_pending'||this.mode==='uncertain')throw new ControllerError(this.mode);if(this.error==='host_state_failed')throw new ControllerError(this.error);}
  private recoveryPending():boolean {return this.mode==='recovery_pending';}
  private conflicted():boolean {return this.mode==='conflict';}
  private nextRevision():number {if(this.accepted.revision>=0xffffffff)throw new ControllerError('revision_exhausted');return this.accepted.revision+1;}
@@ -184,6 +184,7 @@ export class ParentController {
  }
  /** File-event text is untrusted: always re-read the active resource before deciding. */
  observeDisk():Promise<void>{
+  if(this.reloading){this.observationGeneration++;return Promise.resolve();}
   this.observeQueued=true;
   if(this.observing)return this.observing;
   const epoch=this.epoch,task=Promise.resolve().then(async()=>{
@@ -199,10 +200,13 @@ export class ParentController {
   }).catch(error=>{if(this.ownsHost()){this.observationGeneration++;this.mode='uncertain';this.error='uncertain';this.notify();}throw error;});this.observing=task;void task.finally(()=>{if(this.observing===task)this.observing=null;}).catch(()=>{});return task;
  }
  /** Explicit reload starts a new history boundary; an unsettled writer cannot be cancelled by reload. */
- async reload():Promise<Envelope>{
-  this.guard();if(this.saving||this.accepting||this.observing||this.restoring)throw new ControllerError('busy');const epoch=this.epoch;
-  const actual=await readSource(this.host,this.readable());this.guard(epoch);if(this.saving||this.accepting||this.restoring)throw new ControllerError('busy');
-  this.accepted=JSON.parse(this.rust.synchronize(this.nextRevision(),actual.source));this.persisted=actual;this.pendingSource=null;this.mode='editing';this.error=null;this.notify();return structuredClone(this.accepted);
+ reload():Promise<Envelope>{
+  try{this.guard();if(this.saving||this.accepting||this.observing||this.restoring)throw new ControllerError('busy');}catch(error){return Promise.reject(error)}
+  if(this.reloading)return this.reloading;const epoch=this.epoch,generation=this.observationGeneration;
+  const task=Promise.resolve().then(async()=>{
+   const actual=await readSource(this.host,this.readable());this.guard(epoch);if(generation!==this.observationGeneration)throw new ControllerError('stale');
+   this.accepted=JSON.parse(this.rust.synchronize(this.nextRevision(),actual.source));this.persisted=actual;this.pendingSource=null;this.mode='editing';this.error=null;this.notify();return structuredClone(this.accepted);
+  });this.reloading=task;void task.finally(()=>{if(this.reloading===task)this.reloading=null}).catch(()=>{});return task;
  }
  open():never {throw new ControllerError('unsupported');}
  dispose():void {if(this.closed)return;this.closed=true;this.epoch++;this.mode='closed';for(const unsubscribe of this.unsubscribers){try{unsubscribe();}catch{}}this.unsubscribers=[];this.rust.free();}
