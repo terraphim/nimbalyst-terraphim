@@ -4,9 +4,9 @@ interface Init {assets:Record<string,Uint8Array<ArrayBuffer>>;snapshot:{protocol
 /** Verified bytes arrive from the constant opaque installer. */
 export async function activate(init:Init,port:MessagePort,epoch:string){
  const LIMIT=16*1024*1024;const urls:string[]=[];let disposed=false;let deadline:ReturnType<typeof setTimeout>|null=null;let activeId:number|null=null;let activeRequest:any=null;let commandQueued=false;
- let restoreToken:string|null=null;
+ let restoreToken:string|null=null,reloadToken:string|null=null;
  let visual:VisualRuntime|null=null;let hostSaveToken:string|null=null,hostSaveGeneration=0;const saveTokens:Array<{token:string;generation:number}|null>=[];
- const visualStatus=()=>visual?.setBlocked(restoreToken!==null||['uncertain','conflict','closed'].includes(status),reason??undefined);
+ const visualStatus=()=>visual?.setBlocked(restoreToken!==null||reloadToken!==null||['uncertain','conflict','closed'].includes(status),reason??undefined);
  let status='starting',reason:string|null=null,conflictDraft:string|null=null;let bridge:any=null;let engine:any=null;
  const send=(value:unknown)=>{const text=JSON.stringify(value);if(text.length>LIMIT||new TextEncoder().encode(text).length>LIMIT)throw Error('Frame request too large');port.postMessage(text);};
  const parse=(value:unknown)=>{if(typeof value!=='string'||value.length>LIMIT||new TextEncoder().encode(value).length>LIMIT)throw Error('Invalid authoritative message size');const data=JSON.parse(value);if(!data||typeof data!=='object'||Array.isArray(data))throw Error('Invalid authoritative message');return data;};
@@ -27,6 +27,26 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
   port.onmessage=(event:MessageEvent)=>{
    if(disposed)return;let message:any;try{message=parse(event.data);}catch{status='uncertain';reason='Invalid authoritative message';visualStatus();return;}
    if(message.frameEpoch!==epoch)return;if(message.type==='dispose'){cleanup();return;}
+   if(['host-reload','host-reload-failed','host-reload-complete'].includes(message.type)){
+    if(message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
+    if(message.type==='host-reload'){
+     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,resource,session,token,type')return;
+     if(reloadToken||restoreToken||activeId!==null||commandQueued||status==='closed'){send({type:'host-reload-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:'Frame operation is still unsettled'});return;}
+     reloadToken=message.token;visualStatus();const current=JSON.parse(engine.snapshot());send({type:'host-reload-ready',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:reloadToken,revision:current.revision,sourceHash:current.sourceHash});return;
+    }
+    if(message.token!==reloadToken)return;
+    if(message.type==='host-reload-failed'){
+     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,reason,resource,session,token,type'||typeof message.reason!=='string'||message.reason.length>256)return;
+     reloadToken=null;status='uncertain';reason=message.reason;visualStatus();return;
+    }
+    try{
+     if(Object.keys(message).sort().join()!=='frameEpoch,projection,protocol,resource,revision,session,source,sourceHash,token,type')throw Error('Invalid reload completion');
+     source.sourceBytes(message.source);const before=JSON.parse(engine.snapshot());if(message.revision!==before.revision+1)throw Error('Stale reload completion');
+     bridge.receive({...message,type:'sync'});const current=JSON.parse(engine.snapshot());if(current.source!==message.source||current.sourceHash!==message.sourceHash)throw Error('Reload adoption mismatch');
+     bridge.resume();conflictDraft=null;reloadToken=null;status='ready';reason=null;visualStatus();send({type:'host-reload-applied',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,revision:current.revision,sourceHash:current.sourceHash});
+    }catch{status='uncertain';reason='Invalid reload completion';visualStatus();}
+    return;
+   }
    if(message.type==='host-read-draft'){
     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,requestId,resource,session,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.requestId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.requestId))return;
     try{const text=conflictDraft??visual?.source()??bridge.latest;source.sourceBytes(text);send({type:'draft-snapshot',frameEpoch:epoch,protocol:1,requestId:message.requestId,resource:s.resource,session:s.session,acceptedRevision:JSON.parse(engine.snapshot()).revision,source:text})}
@@ -35,7 +55,7 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
    if(message.type==='host-restore'){
     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,resource,session,token,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
     const refuse=(reason:string)=>send({type:'host-restore-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:reason.slice(0,256)});
-    if(restoreToken||commandQueued||['uncertain','conflict','closed'].includes(status)){refuse('Frame is not ready for recovery restoration');return;}
+    if(reloadToken||restoreToken||commandQueued||['uncertain','conflict','closed'].includes(status)){refuse('Frame is not ready for recovery restoration');return;}
     try{client.submit(visual?.source()??bridge.latest);restoreToken=message.token;visualStatus();bridge.command('export')}catch(error){restoreToken=null;visualStatus();refuse(error instanceof Error?error.message:'Recovery restoration refused')}
     return;
    }
@@ -73,8 +93,8 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
    }catch{status='uncertain';reason='Invalid authoritative response';}finally{visualStatus();}
   };port.start();addEventListener('pagehide',()=>cleanup(),{once:true});
   const client={
-   submit(text:string){if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not editable');source.sourceBytes(text);bridge.submit(text);},
-   save(){if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;saveTokens.push(null);try{bridge.command('save');}catch(error){saveTokens.pop();commandQueued=false;throw error;}},
+   submit(text:string){if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not editable');source.sourceBytes(text);bridge.submit(text);},
+   save(){if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;saveTokens.push(null);try{bridge.command('save');}catch(error){saveTokens.pop();commandQueued=false;throw error;}},
    open(){throw Error('Open is unsupported by the released host contract');},
   };
   if(init.visual){const module=await import(url(init.visual.assets.runtime));if(disposed)throw Error('Frame disposed');visual=await module.createVisualRuntime(init.visual.assets,wasm,{source:s.source,resource:s.resource,isCurrent:()=>!disposed,onChange:(text:string)=>client.submit(text),onCommand:(command:'save'|'open')=>client[command]()});if(disposed){visual?.dispose();throw Error('Frame disposed')}}

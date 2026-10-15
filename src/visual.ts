@@ -80,7 +80,7 @@ export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,
   },{capture:true,signal:abort.signal});
   return{
    source,
-   adopt(value,meta){guard();if(bindings.host_presentation_source(value)===source())return;
+   adopt(value,meta){guard();if(!meta.recovery&&bindings.host_presentation_source(value)===source())return;
     if(!meta.external&&!meta.recovery)throw Error('Canonical host output differs; retain the current editor draft.');
     suppress=true;try{editor!.openDocument(value,options.resource);}finally{suppress=false;}
    },
