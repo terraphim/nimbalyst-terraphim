@@ -1,0 +1,11 @@
+# Actual Windows app qualification
+
+The manual **Nimbalyst actual Windows app qualification** workflow runs the official Nimbalyst 0.80.6 Windows x64 application. It does not substitute Chromium component tests for the desktop application and does not publish a release.
+
+Supply a successful `main` component run ID, its exact source commit and the independently checked `.nimext` SHA-256. The verifier requires that exact repository, main push, component workflow and retained Windows artifact. It checks the downloaded Actions ZIP against GitHub’s artifact digest and rejects unsafe paths, links, duplicate names and oversized contents before extraction. It downloads the candidate without rebuilding it, validates its full archive and member hashes, and extracts it only into a new temporary application profile.
+
+The job verifies the official installer SHA-256, extracts the application without running its installer, blocks the application’s external network traffic and launches its actual Electron renderer. The public fixture contains only `Risk requires a Decision.` The UI driver creates `Concern`, saves annotated Markdown, exports clean Markdown and the synonym graph, then reloads and reopens the saved file. Screenshots, actual files, hashes and failed attempts are retained. Every installed extension file is read and checked against the exact candidate after installation and again after the app exits, including failed native runs. CI credentials are removed from the app’s environment. Only the job-owned process and firewall rule are cleaned up.
+
+If the application requires Terms or other first-run onboarding, the workflow stops and records `BLOCKED_ONBOARDING`; it does not manufacture accepted preferences. A green component build, successful launch, or extracted package alone cannot pass the native workflow.
+
+This is a bounded lifecycle check. The first release still requires the complete approved native requirement matrix on macOS, Windows and Linux, including all 41 source-video rows, supported Open and the separate catalogue gate. An unqualified external AI provider remains disabled. The workflow’s source and the candidate’s source are separate identities in the evidence.

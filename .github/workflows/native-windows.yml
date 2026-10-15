@@ -1,0 +1,57 @@
+name: Nimbalyst actual Windows app qualification
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful main component workflow run ID
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character main source commit from that run
+        required: true
+        type: string
+      candidate_sha256:
+        description: Verified SHA-256 of the retained .nimext package
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: nimbalyst-native-windows
+  cancel-in-progress: false
+jobs:
+  native-windows:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26.10.0
+          cache: npm
+      - name: Install the locked browser driver without a substitute browser
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify successful main source and download its exact candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+        run: node scripts/native/verify-candidate.mjs $env:CANDIDATE_RUN $env:SOURCE_SHA $env:CANDIDATE_SHA256 .artifacts/native-windows
+      - name: Run the official app with isolated profile and actual file outputs
+        shell: pwsh
+        env:
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+        run: ./scripts/native/windows.ps1 -CandidateSha256 $env:CANDIDATE_SHA256
+      - name: Retain actual output or concrete onboarding/failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/native-windows/
+          include-hidden-files: true
+          if-no-files-found: error
