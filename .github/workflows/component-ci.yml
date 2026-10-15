@@ -57,6 +57,18 @@ jobs:
           python3 --version | tee .artifacts/package-python.log
           npm run test:native-package 2>&1 | tee .artifacts/package-tests.log
           npm run package:candidate -- --output .artifacts/native-package/terraphim-editor-0.1.0-dev.1.nimext 2>&1 | tee .artifacts/package-build.log
+      - name: Validate closed release admission contracts
+        run: python3 -W error -m unittest discover -s tests/release -v
+      - name: Seal the single original CI candidate for later native qualification
+        if: matrix.os == 'ubuntu-24.04'
+        run: python3 scripts/release/candidate.py seal --package .artifacts/native-package/terraphim-editor-0.1.0-dev.1.nimext --destination .artifacts/release-candidate
+      - name: Retain original qualification input by immutable artifact identity
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qualified-input-${{ github.sha }}-${{ github.run_attempt }}
+          path: .artifacts/release-candidate/
+          if-no-files-found: error
       - name: Retain actual component evidence, including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
