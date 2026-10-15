@@ -71,7 +71,7 @@ function parsedGraph(text: string): void {
 }
 export interface ExportOptions {
  controller: ParentController; host: ControllerHost; supports: SourceReadOptions['supports']; isCurrent: () => boolean;
- derive: (source: string) => Promise<DerivedExports>; timeoutMs?: number;
+ derive: (source: string) => Promise<DerivedExports>; saveBarrier?: () => Promise<SaveReceipt>; timeoutMs?: number;
 }
 interface Operation { destination: string; timedOut: boolean; started: boolean; reject: (error: unknown) => void }
 
@@ -82,6 +82,7 @@ export class ExportCoordinator {
  private readonly identity: {workspace: string; resource: string};
  constructor(private readonly options: ExportOptions) {
   if (!Number.isFinite(options.timeoutMs ?? 30000) || (options.timeoutMs ?? 30000) <= 0 ||
+      (options.saveBarrier !== undefined && typeof options.saveBarrier !== 'function') ||
       typeof options.host.fs?.read !== 'function' || typeof options.host.fs?.write !== 'function')
    throw new ExportError('unsupported');
   this.identity = sourceIdentity(options.host, {supports: options.supports, isCurrent: options.isCurrent});
@@ -133,7 +134,7 @@ export class ExportCoordinator {
  }
  private async run(kind: ExportKind, operation: Operation): Promise<ExportReceipt> {
   const {controller, host} = this.options, {destination} = operation;
-  const saved = await controller.save(); this.current(saved, operation);
+  const saved = await (this.options.saveBarrier ? this.options.saveBarrier() : controller.save()); this.current(saved, operation);
   const derived = await this.options.derive(saved.source); this.current(saved, operation);
   if (derived.sourceHash !== saved.sourceHash || await sha256Utf8(saved.source) !== saved.sourceHash)
    throw new ExportError('invalid_output', destination);

@@ -1,7 +1,7 @@
 /** Reconstructed opaque transport. Visual editor shell and native CSP remain separate gates. */
 import {sourceBytes} from './source.ts';
 import {verifyVisualAssets,type VisualAssets,type VisualManifest} from './visual.ts';
-import type {ParentController,Envelope,Proposal} from './controller.ts';
+import type {ParentController,Envelope,Proposal,SaveReceipt} from './controller.ts';
 export const FRAME_ASSET_NAMES=['bootstrap','source','engineGlue','engineWasm','hostBridge'] as const;
 export type FrameAssetName=typeof FRAME_ASSET_NAMES[number];
 export type FrameAssets=Record<FrameAssetName,Uint8Array<ArrayBuffer>>;
@@ -44,10 +44,12 @@ function opaqueInstaller(nonce:string):void {
  };
  addEventListener('message',onInit);parent.postMessage({type:'terraphim-frame-ready',protocol:1,nonce},'*');
 }
+interface HostSave {token:string;promise:Promise<SaveReceipt>;resolve:(receipt:SaveReceipt)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;generation:number;scheduled:boolean;refused:Error|null}
 /** One owned sandbox, private port, bounded latest proposal and one explicit Save barrier. */
 export class FrameTransport {
  readonly element:HTMLIFrameElement;readonly epoch=crypto.randomUUID();
  private port:MessagePort|null=null;private disposed=false;private initialized=false;private started=false;private busy=false;private lastId=0;
+ private hostSave:HostSave|null=null;
  private options:FrameOptions;private readyListener:((event:MessageEvent)=>void)|null=null;private startupTimer:ReturnType<typeof setTimeout>|null=null;private ownerTimer:ReturnType<typeof setInterval>|null=null;
  private rejectStart:((error:Error)=>void)|null=null;private abortListener:()=>void;
  private constructor(options:FrameOptions){this.options=options;this.element=document.createElement('iframe');this.element.title='Terraphim editor';this.element.setAttribute('sandbox','allow-scripts');this.abortListener=()=>this.dispose();}
@@ -91,24 +93,72 @@ export class FrameTransport {
   });
  }
  private reply(message:Record<string,unknown>):void {if(!this.current()){this.dispose();return;}try{this.port?.postMessage(serializeFrameControl({...message,frameEpoch:this.epoch}));}catch{this.port?.postMessage(serializeFrameControl({type:'transport-error',frameEpoch:this.epoch,id:null,reason:'Authoritative reply exceeds transport limit'}));}}
+ /** Capture the frame's latest source through its existing bridge before the parent Save. */
+ requestSave():Promise<SaveReceipt>{
+  if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
+  if(this.hostSave){
+   const pending=this.hostSave;
+   if(!pending.timedOut&&!pending.refused){
+    if(pending.generation>=Number.MAX_SAFE_INTEGER){pending.timedOut=true;pending.reject(Error('Save request sequence exhausted'));}
+    else {pending.generation++;this.queueHostSave(pending);}
+   }
+   return pending.promise;
+  }
+  try{this.options.controller.snapshot();}catch(error){return Promise.reject(error);}
+  let resolve!:(receipt:SaveReceipt)=>void,reject!:(error:Error)=>void;
+  const promise=new Promise<SaveReceipt>((yes,no)=>{resolve=yes;reject=no;});
+  const pending:HostSave={token:crypto.randomUUID(),promise,resolve,reject,timer:setTimeout(()=>{
+   if(this.hostSave!==pending)return;pending.timedOut=true;
+   reject(Error('Host Save timed out; its outcome is not cancellation'));
+   this.reply({type:'transport-error',reason:'Host Save timed out; its outcome is not cancellation',id:null});
+  },this.options.requestTimeoutMs??30000),timedOut:false,inFlight:false,generation:1,scheduled:false,refused:null};
+  this.hostSave=pending;
+  this.queueHostSave(pending);
+  return promise;
+ }
+ private queueHostSave(pending:HostSave):void {
+  if(pending.scheduled)return;pending.scheduled=true;
+  queueMicrotask(()=>{pending.scheduled=false;if(this.hostSave===pending&&!pending.timedOut&&!pending.refused)this.dispatchHostSave(pending);});
+ }
+ private dispatchHostSave(pending:HostSave):void {
+  if(this.hostSave!==pending)return;
+  let snapshot:Envelope;try{snapshot=this.options.controller.snapshot();}catch(error){this.finishHostSave(pending,undefined,error instanceof Error?error:Error('Frame unavailable'));return;}
+  this.reply({type:'host-save',protocol:1,resource:snapshot.resource,session:snapshot.session,token:pending.token,generation:pending.generation});
+ }
+ private finishHostSave(pending:HostSave,receipt?:SaveReceipt,error?:Error):void {
+  if(this.hostSave!==pending)return;clearTimeout(pending.timer);this.hostSave=null;
+  if(error)pending.reject(error);else if(receipt&&!pending.timedOut)pending.resolve(receipt);
+ }
  private async receive(message:Record<string,unknown>):Promise<void>{
   if(!this.current()){this.dispose();return;}
-  const allowed=['type','frameEpoch','protocol','id','resource','session','revision','sourceHash','source','beforeHash'];const id=message.id;
+  if(message.type==='host-save-refused'){
+   const pending=this.hostSave,before=this.options.controller.snapshot();
+   if(pending&&Object.keys(message).sort().join()==='frameEpoch,generation,protocol,reason,resource,session,token,type'&&message.protocol===1&&message.resource===before.resource&&message.session===before.session&&message.token===pending.token&&message.generation===pending.generation&&typeof message.reason==='string'&&message.reason.length<=256){const error=Error(message.reason);if(pending.inFlight){pending.refused=error;pending.reject(error);}else this.finishHostSave(pending,undefined,error);}
+   return;
+  }
+  const allowed=['type','frameEpoch','protocol','id','resource','session','revision','sourceHash','source','beforeHash','saveToken','saveGeneration'];const id=message.id;
+  const pending=message.type==='save'&&message.saveToken===this.hostSave?.token?this.hostSave:null;
+  if((message.saveToken!==undefined||message.saveGeneration!==undefined)&&(!pending||message.type!=='save'||!Number.isSafeInteger(message.saveGeneration)||(message.saveGeneration as number)<1||(message.saveGeneration as number)>pending.generation)){this.reply({type:'transport-error',id:Number.isSafeInteger(id)?id:null,reason:'Invalid Save barrier token'});return;}
   if(Object.keys(message).some(key=>!allowed.includes(key))||message.protocol!==1||!Number.isSafeInteger(id)||(id as number)<=this.lastId||!['proposal','save','open'].includes(String(message.type))){this.reply({type:'transport-error',id:Number.isSafeInteger(id)?id:null,reason:'Invalid frame request'});return;}
   let before:Envelope;try{before=this.options.controller.snapshot();}catch{this.dispose();return;}
   if(message.resource!==before.resource||message.session!==before.session||message.revision!==before.revision||(message.type!=='proposal'&&message.sourceHash!==before.sourceHash)||this.busy){this.reply({...before,type:'reject',id,reason:'Stale or busy frame request'});return;}
+  if(pending?.timedOut){this.reply({...before,type:'reject',id,reason:'Host Save deadline expired'});this.finishHostSave(pending,undefined,Error('Host Save deadline expired'));return;}
   this.lastId=id as number;this.busy=true;
   try{
    if(message.type==='proposal'){sourceBytes(message.source as string);const accepted=await this.options.controller.accept(message as unknown as Proposal);this.reply({...accepted,type:'ack',id});if(this.options.controller.state().error==='host_state_failed')this.reply({type:'transport-error',id,reason:'host_state_failed'});}
-   else if(message.type==='save'){const receipt=await this.options.controller.save();if(!this.current()){this.dispose();return;}this.reply({...this.options.controller.snapshot(),type:'command-complete',id,receipt});}
+   else if(message.type==='save'){if(pending)pending.inFlight=true;const receipt=await this.options.controller.save();if(!this.current()){this.dispose();return;}this.reply({...this.options.controller.snapshot(),type:'command-complete',id,receipt});if(pending){
+    pending.inFlight=false;
+    if(pending.refused)this.finishHostSave(pending,undefined,pending.refused);
+    else if(pending.timedOut||message.saveGeneration===pending.generation)this.finishHostSave(pending,receipt);
+   }}
    else throw Error('Open is unsupported by the released host contract');
-  }catch(error){if(this.current()){let snapshot:Envelope;try{snapshot=this.options.controller.snapshot();}catch{this.dispose();return;}this.reply({...snapshot,type:'reject',id,reason:error instanceof Error?error.message.slice(0,256):'Frame request refused'});}else this.dispose();}
+  }catch(error){if(this.current()){let snapshot:Envelope;try{snapshot=this.options.controller.snapshot();}catch{this.dispose();return;}this.reply({...snapshot,type:'reject',id,reason:error instanceof Error?error.message.slice(0,256):'Frame request refused'});}else this.dispose();if(pending)this.finishHostSave(pending,undefined,error instanceof Error?error:Error('Host Save refused'));}
   finally{this.busy=false;}
  }
  /** Explicit owner synchronization; blocking states never replace an unsaved frame draft. */
  synchronize():void {if(!this.current()){this.dispose();throw Error('Frame disposed');}const state=this.options.controller.state();if(['conflict','uncertain','recovery_pending'].includes(state.mode)||state.error==='host_state_failed'){this.reply({type:'transport-error',reason:state.error==='host_state_failed'?state.error:state.mode,id:null});return;}this.reply({...this.options.controller.snapshot(),type:'sync'});}
  dispose():void {
-  if(this.disposed)return;this.disposed=true;if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
+  if(this.disposed)return;this.disposed=true;if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
   this.options.signal?.removeEventListener('abort',this.abortListener);if(this.readyListener)removeEventListener('message',this.readyListener);this.readyListener=null;
   try{this.port?.postMessage(serializeFrameControl({type:'dispose',frameEpoch:this.epoch}));}catch{}this.port?.close();this.port=null;this.element.remove();this.options.controller.dispose();this.rejectStart?.(Error('Frame disposed'));this.rejectStart=null;
  }

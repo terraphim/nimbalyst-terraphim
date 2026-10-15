@@ -4,7 +4,7 @@ interface Init {assets:Record<string,Uint8Array<ArrayBuffer>>;snapshot:{protocol
 /** Verified bytes arrive from the constant opaque installer. */
 export async function activate(init:Init,port:MessagePort,epoch:string){
  const LIMIT=16*1024*1024;const urls:string[]=[];let disposed=false;let deadline:ReturnType<typeof setTimeout>|null=null;let activeId:number|null=null;let activeRequest:any=null;let commandQueued=false;
- let visual:VisualRuntime|null=null;
+ let visual:VisualRuntime|null=null;let hostSaveToken:string|null=null,hostSaveGeneration=0;const saveTokens:Array<{token:string;generation:number}|null>=[];
  const visualStatus=()=>visual?.setBlocked(['uncertain','conflict','closed'].includes(status),reason??undefined);
  let status='starting',reason:string|null=null,conflictDraft:string|null=null;let bridge:any=null;let engine:any=null;
  const send=(value:unknown)=>{const text=JSON.stringify(value);if(text.length>LIMIT||new TextEncoder().encode(text).length>LIMIT)throw Error('Frame request too large');port.postMessage(text);};
@@ -16,15 +16,29 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
   const bridgeUrl=url(init.assets.hostBridge);await new Promise<void>((resolve,reject)=>{const script=document.createElement('script');script.src=bridgeUrl;script.onload=()=>{script.remove();resolve();};script.onerror=()=>{script.remove();reject(Error('Host bridge refused'));};document.head.append(script);});
   const s=init.snapshot;source.sourceBytes(s.source);engine=new wasm.TerraphimHostSession(s.resource,s.session,s.revision,s.source);
   const snapshot=JSON.parse(engine.snapshot());if(snapshot.source!==s.source||snapshot.sourceHash!==s.sourceHash)throw Error('Initial Rust session mismatch');
+  const refuseHostSave=(message:string)=>{if(!hostSaveToken)return;send({type:'host-save-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:hostSaveToken,generation:hostSaveGeneration,reason:message.slice(0,256)});hostSaveToken=null;};
   const Bridge=(globalThis as any).TerraphimHostBridge;
   bridge=new Bridge({engine,send:(message:any)=>{
-   if(disposed||activeId!==null)throw Error('Frame request already active');activeId=message.id;activeRequest={type:message.type,id:message.id,revision:message.revision,sourceHash:message.sourceHash,source:message.source};status='pending';reason=null;
+   if(disposed||activeId!==null)throw Error('Frame request already active');activeId=message.id;activeRequest={type:message.type,id:message.id,revision:message.revision,sourceHash:message.sourceHash,source:message.source,saveBarrier:message.type==='save'?saveTokens.shift():undefined};status='pending';reason=null;
    deadline=setTimeout(()=>{if(!disposed&&activeId===message.id){status='uncertain';reason='Request timed out; its outcome is not cancellation';visualStatus();}},init.requestTimeoutMs);
-   const {projection,...request}=message;send({...request,frameEpoch:epoch});
-  },adopt:(value:string,meta:any)=>visual?.adopt(value,meta),conflict:(failure:any)=>{source.sourceBytes(failure.draft);conflictDraft=failure.draft;status='conflict';reason=String(failure.reason??'Source conflict').slice(0,256);visualStatus();}});
+   const {projection,...request}=message;send({...request,...(activeRequest.saveBarrier?{saveToken:activeRequest.saveBarrier.token,saveGeneration:activeRequest.saveBarrier.generation}:{}),frameEpoch:epoch});
+  },adopt:(value:string,meta:any)=>visual?.adopt(value,meta),conflict:(failure:any)=>{source.sourceBytes(failure.draft);conflictDraft=failure.draft;status='conflict';reason=String(failure.reason??'Source conflict').slice(0,256);saveTokens.length=0;commandQueued=false;refuseHostSave(reason);visualStatus();}});
   port.onmessage=(event:MessageEvent)=>{
    if(disposed)return;let message:any;try{message=parse(event.data);}catch{status='uncertain';reason='Invalid authoritative message';visualStatus();return;}
    if(message.frameEpoch!==epoch)return;if(message.type==='dispose'){cleanup();return;}
+   if(message.type==='host-save'){
+    if(Object.keys(message).sort().join()!=='frameEpoch,generation,protocol,resource,session,token,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||!Number.isSafeInteger(message.generation)||message.generation<1||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
+    if(hostSaveToken!==null&&(message.token!==hostSaveToken||message.generation<=hostSaveGeneration))return;
+    hostSaveToken=message.token;hostSaveGeneration=message.generation;
+    try{
+     client.submit(visual?.source()??bridge.latest);
+     const queued=saveTokens.find(value=>value?.token===hostSaveToken);
+     if(queued)queued.generation=hostSaveGeneration;
+     else {saveTokens.push({token:hostSaveToken!,generation:hostSaveGeneration});commandQueued=true;bridge.command('save');}
+    }
+    catch(error){refuseHostSave(error instanceof Error?error.message:'Frame Save refused');}
+    return;
+   }
    if(message.type==='transport-error'){status='uncertain';reason=String(message.reason??'Request refused').slice(0,256);visualStatus();return;}
    if(!['ack','reject','sync','command-complete'].includes(message.type)||message.protocol!==1||message.resource!==s.resource||message.session!==s.session)return;
    const completing=message.id===activeId&&['ack','reject','command-complete'].includes(message.type);
@@ -35,13 +49,13 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
      const current=JSON.parse(engine.snapshot());
      if(!completing||message.revision!==current.revision||message.sourceHash!==current.sourceHash||message.source!==current.source)throw Error('Stale command completion');
     }
-    if(completing){if(deadline)clearTimeout(deadline);deadline=null;activeId=null;activeRequest=null;if(message.type==='command-complete'||message.type==='reject')commandQueued=false;status=message.type==='reject'?'refused':'ready';reason=message.type==='reject'?String(message.reason??'Refused').slice(0,256):null;}
+    if(completing){const completedBarrier=activeRequest?.saveBarrier;if(deadline)clearTimeout(deadline);deadline=null;activeId=null;activeRequest=null;if(message.type==='command-complete'){if(completedBarrier?.token===hostSaveToken&&completedBarrier?.generation===hostSaveGeneration)hostSaveToken=null;commandQueued=saveTokens.length>0;}if(message.type==='reject'){saveTokens.length=0;commandQueued=false;refuseHostSave(String(message.reason??'Frame Save refused'));}status=message.type==='reject'?'refused':'ready';reason=message.type==='reject'?String(message.reason??'Refused').slice(0,256):null;}
     bridge.receive(message);
    }catch{status='uncertain';reason='Invalid authoritative response';}finally{visualStatus();}
   };port.start();addEventListener('pagehide',()=>cleanup(),{once:true});
   const client={
    submit(text:string){if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not editable');source.sourceBytes(text);bridge.submit(text);},
-   save(){if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;try{bridge.command('save');}catch(error){commandQueued=false;throw error;}},
+   save(){if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;saveTokens.push(null);try{bridge.command('save');}catch(error){saveTokens.pop();commandQueued=false;throw error;}},
    open(){throw Error('Open is unsupported by the released host contract');},
   };
   if(init.visual){const module=await import(url(init.visual.assets.runtime));if(disposed)throw Error('Frame disposed');visual=await module.createVisualRuntime(init.visual.assets,wasm,{source:s.source,resource:s.resource,isCurrent:()=>!disposed,onChange:(text:string)=>client.submit(text),onCommand:(command:'save'|'open')=>client[command]()});if(disposed){visual?.dispose();throw Error('Frame disposed')}}
