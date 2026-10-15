@@ -14,12 +14,14 @@ import {loadRoleStorage} from './role-runtime.ts';
 export interface NativeSessionOptions {
  container:HTMLElement;host:EditorHost;isCurrent:()=>boolean;supports:typeof editorHostSupports;
  copyText:(text:string)=>Promise<void>;indexedDB:IDBFactory;databaseName?:string;
+ /** Tests may shorten the deadline; production defaults to the maximum 30 seconds. */
+ admissionTimeoutMs?:number;
  frame:{assets:FrameAssets;manifest:FrameManifest};visual:{assets:VisualAssets;manifest:VisualManifest};
 }
 /** One host tab owns its controller, private frame, export engine and recovery view. */
 export class NativeSession {
  readonly element:HTMLElement;
- private disposed=false;private initializing=false;private generation=0;private controller:ParentController|null=null;
+ private disposed=false;private initializing=false;private generation=0;private admissionDeadline:ReturnType<typeof setTimeout>|null=null;private finishAdmission:(()=>void)|null=null;private controller:ParentController|null=null;
  private roleStore:RoleCheckpoints|null=null;private roleControls:RoleControls|null=null;
  private frame:FrameTransport|null=null;private exporter:ExportCoordinator|null=null;private controls:ParentControls|null=null;
  private readonly recovery:DraftRecovery;private readonly frameContainer:HTMLElement;private readonly controlsContainer:HTMLElement;private readonly notice:HTMLElement;
@@ -33,7 +35,16 @@ export class NativeSession {
  }
  static async start(options:NativeSessionOptions):Promise<NativeSession>{
   if(!(options.container instanceof HTMLElement)||!options.container.isConnected||!options.isCurrent())throw Error('Native editor owner unavailable');
-  const session=new NativeSession(options);await session.admit();return session;
+  const timeout=options.admissionTimeoutMs??30000;if(!Number.isSafeInteger(timeout)||timeout<1||timeout>30000)throw Error('Invalid admission deadline');
+  const session=new NativeSession(options),expired=new Promise<void>(resolve=>{session.finishAdmission=resolve});
+  session.admissionDeadline=setTimeout(()=>session.expireAdmission(),timeout);
+  try{await Promise.race([session.admit(),expired]);return session}catch(error){session.dispose();throw error}finally{session.finishAdmissionWait()}
+
+ }
+ private finishAdmissionWait():void{if(this.admissionDeadline!==null)clearTimeout(this.admissionDeadline);this.admissionDeadline=null;const finish=this.finishAdmission;this.finishAdmission=null;finish?.()}
+ private expireAdmission():void{
+  try{if(this.current()&&this.initializing){this.stopEditing();this.showRecovery();this.notice.textContent='Opening timed out. Editing remains disabled; recovery drafts are available. Reopen this editor to try again.'}}
+  finally{this.finishAdmissionWait()}
  }
  private current():boolean {try{return!this.disposed&&this.options.isCurrent()&&this.element.isConnected&&this.options.host.workspaceId===this.identity.workspace&&this.options.host.filePath===this.identity.resource}catch{return false}}
  private guard(generation:number):void {if(!this.current()||generation!==this.generation)throw Error('Native editor owner changed');}
@@ -71,5 +82,5 @@ export class NativeSession {
    if(this.current()&&generation===this.generation){this.stopEditing();this.showRecovery();this.notice.textContent=`Editing unavailable: ${error instanceof Error?error.message:'Host admission failed'}. Use the ordinary Markdown editor, or inspect recovery drafts.`;}
   }finally{this.initializing=false;}
  }
- dispose():void {if(this.disposed)return;this.disposed=true;clearInterval(this.ownerTimer);this.stopEditing();this.recovery.close();this.element.remove();}
+ dispose():void {if(this.disposed)return;this.disposed=true;this.finishAdmissionWait();clearInterval(this.ownerTimer);this.stopEditing();this.recovery.close();this.element.remove();}
 }
