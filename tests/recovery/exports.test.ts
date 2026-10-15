@@ -116,19 +116,21 @@ test('dispose while derivation waits refuses the operation without an output wri
 
 
 test('timeout retains the in-flight operation and refuses a second export until it settles', async ({page}) => {
- const f = await exportFixture(page, 100);
+ const f = await exportFixture(page, 1000);
  try {
-  await page.evaluate(() => {const w = window as any; w.deriveGate = new Promise(r => w.releaseDerive = r);
+  const readsBefore=f.rawCalls();f.blockRaw();
+  await page.evaluate(() => {const w = window as any;
    w.pendingExport = w.exporter.export('clean', 'timeout.md').then(() => 'unexpected', (e: any) => e.code);});
-  await expect.poll(() => page.evaluate(() => (window as any).deriveStarted)).toBe(true);
+  // Wait for the actual raw read, not a race between CI filesystem startup and the deadline.
+  await expect.poll(() => f.rawCalls()).toBeGreaterThan(readsBefore);
   expect(await page.evaluate(() => (window as any).pendingExport)).toBe('timeout');
   expect(await page.evaluate(async () => {try {await (window as any).exporter.export('clean', 'second.md'); return 'unexpected';} catch (e) {return (e as any).code;}})).toBe('busy');
-  await page.evaluate(() => (window as any).releaseDerive());
+  f.releaseRaw();
   await expect.poll(() => page.evaluate(async () => {try {await (window as any).exporter.export('clean', 'second.md'); return 'saved';} catch (e) {return (e as any).code;}})).toBe('saved');
   await expect(access(f.destination('timeout.md'))).rejects.toThrow();
   expect(await f.readDestination('second.md')).toBe('Risk requires a Decision.\n');
   expect(f.edits).toHaveLength(1);
- } finally {await f.cleanup();}
+ } finally {f.releaseRaw();await f.cleanup();}
 });
 
 test('an edit after the exclusive write starts leaves the export bound to its saved revision', async ({page}) => {
