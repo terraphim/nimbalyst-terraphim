@@ -187,16 +187,20 @@ test('save conflict stops export and preserves the real external source', async 
 
 for (const change of ['resource', 'current', 'capability'] as const) {
  test(`owner ${change} changes after actual write retains destination and uncertain-file evidence`, async ({page}) => {
-  const f = await exportFixture(page);
+  // Owner invalidation uses the production budget; dedicated timeout cases keep their short deadlines.
+  const f = await exportFixture(page, 30000);
+  let ownerChanged = false;
   try {
-   f.afterWrite(() => page.evaluate(change => {
+   if (change === 'current') f.beforeWrite(() => new Promise(resolve => setTimeout(resolve, 2200)));
+   f.afterWrite(async () => {await page.evaluate(change => {
     const w = window as any;
     if (change === 'resource') w.host.filePath = w.host.filePath.replace('brief.terraphim.md', 'other.terraphim.md');
     else if (change === 'current') w.active = false;
     else w.host.capabilities = {supports: () => false, unavailable: []};
-   }, change));
+   }, change); ownerChanged = true;});
    const result = await page.evaluate(async () => {try {await (window as any).exporter.export('clean', 'owner-changed.md'); return null;}
     catch (e) {return {code:(e as any).code, destination:(e as any).destination, mayExist:(e as any).mayExist};}});
+   await expect.poll(() => ownerChanged).toBe(true);
    expect(result).toEqual({code:change === 'capability' ? 'unsupported' : 'stale', destination:f.destination('owner-changed.md'), mayExist:true});
    expect(await f.readDestination('owner-changed.md')).toBe('Risk requires a Decision.\n');
    expect(f.edits).toHaveLength(1);

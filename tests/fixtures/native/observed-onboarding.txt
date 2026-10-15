@@ -1,0 +1,154 @@
+File
+Edit
+View
+Window
+Developer
+Help
+add
+New file
+arrow_drop_down
+workspace
+—
+Files
+account_tree
+arrow_drop_down
+add
+New session
+dock_to_right
+dock_to_left
+account_tree
+code
+database
+public
+α
+--
+--
+--
+gpp_maybe
+palette
+feedback
+person
+workspace
+refresh
+search
+filter_alt
+D:\a\_temp\terraphim-nimbalyst-hZgdYP\workspace
+FILES
+description
+brief.terraphim.md
+workspace
+
+Files are saved automatically as you work
+
+note_add
+New file
+⌘N
+
+Create a Markdown doc, mockup, diagram, spreadsheet, or code file.
+
+Markdown
+Mockup
+Diagram
+auto_awesome
+Ask the agent
+
+Type into the chat on the right — it can read, edit, and create files for you.
+
+Summarize this project
+Draft a plan for…
+lightbulb
+TIP
+Preview mockups and diagrams instantly
+
+Files like .mockup.html, .excalidraw, and .mindmap open in visual editors. Ask the agent to create one and it renders live as it writes.
+
+Try it
+Next tip
+All tips
+New Session
+expand_more
+zoom_out_map
+Try a command:
+/
+planning:launch-new-session
+/
+feedback:feature-request
+/
+planning:implement
++10
+arrow_downward
+AGENT
+Claude Agent · Opus 5.5 (1M)
+expand_more
+psychology
+High
+expand_more
+bolt
+Actions
+expand_more
+--
+Set up agents for "workspace"
+
+Choose how much your coding agents can do on their own. You can change this anytime.
+
+Agent-verified
+Recommended
+Works without interrupting you; risky actions like deploys and destructive commands pause for your OK.
+Allow everything
+No prompts, no checks — every action runs immediately. For projects you fully trust.
+Allow edits only
+File edits run automatically; shell commands and web requests ask first.
+Ask every time
+Approve each action before it runs. Your approvals are remembered.
+Agents can run this project's code. If you don't recognize where this project came from, don't trust it.
+Advanced settings
+Not now
+Start working
+Welcome to Nimbalyst
+Choose Your Mode*
+edit_note
+Standard Mode
+
+Simplified interface focused on writing, editing, and AI assistance
+
+terminal
+Developer Mode
+
+Full development environment with git worktrees, terminal access, development specific features
+
+What best describes your role?
+No Answer
+Software Developer
+Product Manager
+Designer
+Writer / Content
+Researcher
+Marketing
+Sales
+Finance
+Student
+Hobbyist / Personal Use
+Other
+How did you hear about Nimbalyst?
+No Answer
+Search
+Social
+Friend
+AI
+Ad
+YouTube
+GitHub
+Course/Training
+Podcast
+Newsletter/Article
+Other
+Email address
+
+Receive occasional product updates and tips
+
+We collect usage data to improve Nimbalyst. No prompts or content is ever collected. You can opt out of analytics any time in Settings.
+
+Get started…
+Start tutorial
+
+By continuing, you agree to our Terms of Service and Privacy Policy.
