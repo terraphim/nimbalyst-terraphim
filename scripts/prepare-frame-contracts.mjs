@@ -9,3 +9,9 @@ await mkdir('.cache/contracts/frame',{recursive:true});const manifest={};
 for(const [name,[file,expected]] of Object.entries(dependencies)){const bytes=await readFile(file);if(sha(bytes)!==expected)throw Error('Pinned frame dependency mismatch');const suffix=name==='engineWasm'?'.wasm':'.js';await writeFile(`.cache/contracts/frame/${name}${suffix}`,bytes);manifest[name]={sha256:expected,bytes:bytes.length,url:`/contracts/frame/${name}${suffix}`};}
 for(const [name,path] of [['bootstrap','src/frame-bootstrap.ts'],['source','src/source.ts']]){const content=await readFile(path,'utf8'),bytes=Buffer.from(ts.transpileModule(content,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);await writeFile(`.cache/contracts/frame/${name}.js`,bytes);manifest[name]={sha256:sha(bytes),bytes:bytes.length,url:`/contracts/frame/${name}.js`};}
 await writeFile('.cache/contracts/frame/manifest.json',JSON.stringify(manifest,null,2)+'\n');
+
+// Compile the standalone sandbox script before the host module loader can rewrite imports.
+const installerInput=await readFile('src/opaque-installer.ts','utf8');
+const installerOutput=ts.transpileModule(installerInput,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None,alwaysStrict:true},reportDiagnostics:true});
+if(installerOutput.diagnostics?.length||/<\/script/i.test(installerOutput.outputText))throw Error('Invalid standalone installer');
+await writeFile('.cache/contracts/opaque-installer-source.ts','// Generated from the separately typechecked standalone installer.\nexport const opaqueInstallerSource='+JSON.stringify(installerOutput.outputText)+';\n');

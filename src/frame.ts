@@ -1,3 +1,4 @@
+import {opaqueInstallerSource} from '../.cache/contracts/opaque-installer-source.ts';
 /** Reconstructed opaque transport. Visual editor shell and native CSP remain separate gates. */
 import type {DraftSelection} from './recovery.ts';
 import {sourceBytes,sha256Utf8} from './source.ts';
@@ -21,29 +22,6 @@ export async function verifyFrameAssets(assets:FrameAssets,manifest:FrameManifes
  for(const name of FRAME_ASSET_NAMES){const source=assets[name];if(!(source instanceof Uint8Array)||source.byteLength!==expected[name].bytes||(total+=source.byteLength)>LIMIT)throw Error('Invalid frame asset size');checked[name]=new Uint8Array(source);}
  for(const name of FRAME_ASSET_NAMES){if(!isCurrent())throw Error('Frame owner changed');const hash=await digest(checked[name]);if(!isCurrent())throw Error('Frame owner changed');if(hash!==expected[name].sha256)throw Error('Frame asset hash mismatch');}
  return checked;
-}
-/** Constant installer: document text is transferred on the private port, never interpolated. */
-function opaqueInstaller(nonce:string):void {
- let used=false;
- const onInit=async(event:MessageEvent)=>{
-  if(used||event.source!==parent||event.data?.type!=='terraphim-init'||event.data?.nonce!==nonce||event.ports.length!==1)return;
-  used=true;removeEventListener('message',onInit);const port=event.ports[0];let bootstrapUrl:string|null=null;
-  try{
-   const init=event.data;const names=['bootstrap','source','engineGlue','engineWasm','hostBridge'];
-   if(Object.keys(init.assets).sort().join()!==[...names].sort().join()||Object.keys(init.manifest).sort().join()!==[...names].sort().join())throw Error('Invalid assets');let total=0;
-   for(const name of names){const bytes=init.assets[name] as Uint8Array<ArrayBuffer>,expected=init.manifest[name];if(!(bytes instanceof Uint8Array)||!expected||bytes.length!==expected.bytes||!(/^[a-f0-9]{64}$/).test(expected.sha256)||(total+=bytes.length)>16*1024*1024)throw Error('Invalid asset');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');if(hash!==expected.sha256)throw Error('Asset integrity failure');}
-   if(init.visual){
-    const visualNames=['runtime','components','styles','wrapper','graphWorker','graphGlue','graphWasm','defaultRole'];
-    if(Object.keys(init.visual.assets).sort().join()!==[...visualNames].sort().join()||Object.keys(init.visual.manifest).sort().join()!==[...visualNames].sort().join())throw Error('Invalid visual assets');
-    for(const name of visualNames){const bytes=init.visual.assets[name] as Uint8Array<ArrayBuffer>,expected=init.visual.manifest[name];if(!(bytes instanceof Uint8Array)||!expected||Object.keys(expected).sort().join()!=='bytes,sha256'||!Number.isSafeInteger(expected.bytes)||expected.bytes<=0||bytes.length!==expected.bytes||!(/^[a-f0-9]{64}$/).test(expected.sha256)||(total+=bytes.length)>16*1024*1024)throw Error('Invalid visual asset');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');if(hash!==expected.sha256)throw Error('Visual asset integrity failure');}
-   }
-   bootstrapUrl=URL.createObjectURL(new Blob([init.assets.bootstrap],{type:'text/javascript'}));
-   const module=await import(bootstrapUrl);const client=await module.activate(init,port,nonce);
-   Object.defineProperty(globalThis,'TerraphimFrameClient',{value:client,configurable:true});
-  }catch{port.postMessage(JSON.stringify({type:'frame-error',frameEpoch:nonce,reason:'Frame initialization failed'}));port.close();}
-  finally{if(bootstrapUrl)URL.revokeObjectURL(bootstrapUrl);}
- };
- addEventListener('message',onInit);parent.postMessage({type:'terraphim-frame-ready',protocol:1,nonce},'*');
 }
 interface HostSave {token:string;promise:Promise<SaveReceipt>;resolve:(receipt:SaveReceipt)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;generation:number;scheduled:boolean;refused:Error|null}
 interface HostRestore {token:string;selection:DraftSelection;promise:Promise<Envelope>;resolve:(receipt:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;receipt:Envelope|null}
@@ -81,7 +59,7 @@ export class FrameTransport {
     this.port.onmessage=(message:MessageEvent)=>{
      if(!this.current()){this.dispose();return;}let data:Record<string,unknown>;try{data=parsed(message.data);}catch{this.reply({type:'transport-error',reason:'Invalid frame message size or syntax',id:null});return;}
      if(data.frameEpoch!==this.epoch)return;
-     if(data.type==='frame-error'){fail('Frame refused its local assets');return;}
+     if(data.type==='frame-error'){const reason=typeof data.reason==='string'&&data.reason.length<=256?data.reason:'Frame initialization failed';fail('Frame startup failed: '+reason);return;}
      if(data.type==='frame-started'){
       if(this.started)return;
       if(data.protocol!==1||data.resource!==snapshot.resource||data.session!==snapshot.session||data.revision!==snapshot.revision||data.sourceHash!==snapshot.sourceHash){fail('Frame session mismatch');return;}
@@ -94,7 +72,7 @@ export class FrameTransport {
     };
     this.port.start();this.element.contentWindow!.postMessage({type:'terraphim-init',nonce:this.epoch,assets,manifest:this.options.manifest,visual:this.options.visual,snapshot,requestTimeoutMs:this.options.requestTimeoutMs??30000},'*',[channel.port2]);
    };
-   addEventListener('message',this.readyListener);const nonce=this.epoch;const script=`(${opaqueInstaller.toString()})(${JSON.stringify(nonce)});`;
+   addEventListener('message',this.readyListener);const nonce=this.epoch;const script=opaqueInstallerSource;
    const localResources=this.options.visual?"style-src 'unsafe-inline'; connect-src blob: data:; worker-src blob:; img-src blob: data:; font-src data:":"style-src 'none'; connect-src 'none'; worker-src 'none'; img-src 'none'; font-src 'none'";
    this.element.srcdoc=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' blob: 'wasm-unsafe-eval'; ${localResources}; frame-src 'none'; base-uri 'none'; form-action 'none'"><script nonce="${nonce}">${script}</script>`;
    this.options.container.append(this.element);
