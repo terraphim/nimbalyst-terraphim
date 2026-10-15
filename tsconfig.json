@@ -25,6 +25,7 @@
     "src/frame.ts",
     "src/frame-bootstrap.ts",
     "src/exports.ts",
-    "src/visual.ts"
+    "src/visual.ts",
+    "src/controls.ts"
   ]
 }

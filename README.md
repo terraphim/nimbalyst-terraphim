@@ -2,7 +2,7 @@
 
 This repository contains the in-progress components for a Nimbalyst editor that reuses Terraphim's Rust/WASM engine. There is no installable Nimbalyst extension or package release yet.
 
-The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Native host wiring, recovery/role controls, optional AI alternatives and installed-app acceptance remain in progress.
+The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Parent controls provide Save, fresh-file export dialogs with cancellation/focus restoration, and recovery list/copy/explicit-discard even when editing is unavailable. Native host wiring, recovery restoration, role controls, optional AI alternatives and installed-app acceptance remain in progress.
 
 ## Run the component tests
 
