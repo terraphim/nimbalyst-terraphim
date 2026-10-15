@@ -8,6 +8,9 @@ import {DraftRecovery} from './recovery.ts';
 import {ExportCoordinator,RustExportDeriver} from './exports.ts';
 import {ParentControls} from './controls.ts';
 interface Engine {initSync(input:{module:Uint8Array<ArrayBuffer>}):unknown;TerraphimHostSession:new(resource:string,session:string,revision:number,source:string)=>RustSession;open_document(source:string):unknown;export_document():string;export_knowledge_graph():string}
+import {RoleCheckpoints} from './role-storage.ts';
+import {RoleControls} from './role-controls.ts';
+import {loadRoleStorage} from './role-runtime.ts';
 export interface NativeSessionOptions {
  container:HTMLElement;host:EditorHost;isCurrent:()=>boolean;supports:typeof editorHostSupports;
  copyText:(text:string)=>Promise<void>;indexedDB:IDBFactory;databaseName?:string;
@@ -17,6 +20,7 @@ export interface NativeSessionOptions {
 export class NativeSession {
  readonly element:HTMLElement;
  private disposed=false;private initializing=false;private generation=0;private controller:ParentController|null=null;
+ private roleStore:RoleCheckpoints|null=null;private roleControls:RoleControls|null=null;
  private frame:FrameTransport|null=null;private exporter:ExportCoordinator|null=null;private controls:ParentControls|null=null;
  private readonly recovery:DraftRecovery;private readonly frameContainer:HTMLElement;private readonly controlsContainer:HTMLElement;private readonly notice:HTMLElement;
  private unsubscribers:Array<()=>void>=[];private readonly ownerTimer:ReturnType<typeof setInterval>;private readonly identity:{workspace:string|undefined;resource:string};
@@ -40,6 +44,7 @@ export class NativeSession {
  }
  private stopEditing():void {
   this.generation++;for(const unsubscribe of this.unsubscribers){try{unsubscribe()}catch{}}this.unsubscribers=[];
+  this.roleControls?.dispose();this.roleControls=null;this.roleStore?.close();this.roleStore=null;
   this.controls?.dispose();this.controls=null;this.exporter?.dispose();this.exporter=null;this.frame?.dispose();this.frame=null;this.controller?.dispose();this.controller=null;
  }
  private async engine(assets:FrameAssets,generation:number):Promise<Engine>{
@@ -58,7 +63,10 @@ export class NativeSession {
    this.controls?.dispose();this.controls=new ParentControls({container:this.controlsContainer,isCurrent:()=>this.current()&&generation===this.generation,recovery:this.recovery,scope:{workspace:this.options.host.workspaceId!,resource:this.options.host.filePath},copyText:this.options.copyText,editing:{controller:this.controller,frame:this.frame,exporter:this.exporter}});
    this.unsubscribers.push(this.options.host.onFileChanged(()=>{void(async()=>{try{await this.controller?.observeDisk();if(this.current()&&generation===this.generation)this.frame?.synchronize()}catch{if(this.current()&&generation===this.generation){this.notice.textContent='The file changed or became unavailable. Your recovery drafts are preserved.';try{this.frame?.synchronize()}catch{this.stopEditing();this.showRecovery()}}}})()}));
    if(this.options.host.onReadOnlyChanged)this.unsubscribers.push(this.options.host.onReadOnlyChanged(()=>{if(!this.current())return;this.stopEditing();this.showRecovery();this.notice.textContent='File access changed. Reopen this editor to check access again; recovery drafts are preserved.'}));
-   this.notice.textContent='';
+   let roleNotice='';
+   try{const Storage=await loadRoleStorage(this.options.visual,()=>this.current()&&generation===this.generation);this.guard(generation);this.roleStore=new RoleCheckpoints({Storage,indexedDB:this.options.indexedDB,databaseName:(this.options.databaseName??'terraphim-editor')+':role-checkpoints'});this.roleControls=new RoleControls({container:this.controlsContainer,workspace:this.options.host.workspaceId!,isCurrent:()=>this.current()&&generation===this.generation,store:this.roleStore,client:{exportSnapshot:()=>frame.exportRoleSnapshot(),importSnapshot:snapshot=>frame.importRoleSnapshot(snapshot)}})}
+   catch(error){this.guard(generation);this.roleControls?.dispose();this.roleControls=null;this.roleStore?.close();this.roleStore=null;roleNotice=`Local role checkpoints unavailable: ${error instanceof Error?error.message:'Storage unavailable'}`}
+   this.notice.textContent=roleNotice;
   }catch(error){
    if(this.current()&&generation===this.generation){this.stopEditing();this.showRecovery();this.notice.textContent=`Editing unavailable: ${error instanceof Error?error.message:'Host admission failed'}. Use the ordinary Markdown editor, or inspect recovery drafts.`;}
   }finally{this.initializing=false;}

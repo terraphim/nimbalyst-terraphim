@@ -20,14 +20,14 @@ export async function verifyVisualAssets(assets:VisualAssets,manifest:VisualMani
 interface Surface {historyOwner:unknown;history:unknown[];historyIndex:number;onChange(callback:()=>void):()=>void;getText():string;undo():boolean;redo():boolean}
 interface Editor {
  markdownEditor:{surface:Surface;graphRoleSync:Promise<unknown>;loadThesaurus(text:string):unknown;alignDocumentModel(bindings:Bindings):void;documentKey:string;persistence?:unknown};
- rolegraph:{ready:Promise<unknown>;exportSnapshot():Promise<string>};
+ rolegraph:{ready:Promise<unknown>;exportSnapshot():Promise<string>;importSnapshot(snapshot:string):Promise<unknown>};
  openDocument(source:string,name?:string):unknown;destroy():unknown;
 }
 interface Bindings {save_document():string;host_presentation_source(source:string):string}
 interface VisualOptions {source:string;resource:string;isCurrent:()=>boolean;onChange:(source:string)=>void;onCommand:(command:'save'|'open')=>void}
 export interface VisualRuntime {
  source():string;adopt(source:string,options:{canonical?:boolean;external?:boolean;recovery?:boolean}):void;
- setBlocked(blocked:boolean,reason?:string):void;graphSnapshot():Promise<string>;
+ setBlocked(blocked:boolean,reason?:string):void;graphSnapshot():Promise<string>;importGraphSnapshot(snapshot:string):Promise<string>;
  state():{historyOwner:unknown;historyEntries:number;historyIndex:number;blocked:boolean;workers:number;urls:number};dispose():void;
 }
 /** Called only after installer integrity verification, inside the isolated frame. */
@@ -86,6 +86,7 @@ export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,
    },
    setBlocked,
    async graphSnapshot(){guard();const value=await editor!.rolegraph.exportSnapshot();guard();return value;},
+   async importGraphSnapshot(snapshot){guard();await editor!.rolegraph.importSnapshot(snapshot);guard();await editor!.markdownEditor.graphRoleSync;guard();const value=await editor!.rolegraph.exportSnapshot();guard();return value;},
    state(){return{historyOwner:editor?.markdownEditor.surface.historyOwner,historyEntries:editor?.markdownEditor.surface.history.length??0,historyIndex:editor?.markdownEditor.surface.historyIndex??-1,blocked,workers:workers.length,urls:urls.length};},
    dispose:cleanup,
   };
