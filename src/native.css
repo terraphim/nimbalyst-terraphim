@@ -1,0 +1,14 @@
+.terraphim-native-parent{height:100%;min-height:480px;overflow:auto;color:inherit;font:14px system-ui,sans-serif}
+.terraphim-nimbalyst{height:100%;min-height:480px}
+.terraphim-nimbalyst [role=toolbar]{display:flex;flex-wrap:wrap;gap:8px;padding:8px}
+.terraphim-nimbalyst button,.terraphim-nimbalyst input{font:inherit}
+.terraphim-nimbalyst button{padding:6px 10px;cursor:pointer}
+.terraphim-nimbalyst button:disabled{cursor:default;opacity:.55}
+.terraphim-nimbalyst button:focus-visible,.terraphim-nimbalyst input:focus-visible{outline:2px solid Highlight;outline-offset:2px}
+.terraphim-nimbalyst [role=status],.terraphim-nimbalyst [role=alert]{margin:0;padding:6px 12px}
+.terraphim-nimbalyst [role=alert]:empty{display:none}
+.terraphim-nimbalyst section[aria-label='Recovery drafts']{padding:12px;max-height:360px;overflow:auto}
+.terraphim-nimbalyst section[aria-label='Recovery drafts'] article{border:1px solid currentColor;border-radius:4px;padding:10px;margin:10px 0}
+.terraphim-nimbalyst dialog{max-width:min(440px,90vw);padding:20px;border-radius:8px}
+.terraphim-nimbalyst dialog label,.terraphim-nimbalyst dialog input{display:block;margin:8px 0;width:100%;box-sizing:border-box}
+.terraphim-nimbalyst dialog button{margin-right:8px}

@@ -51,6 +51,12 @@ jobs:
           set -o pipefail
           unset NO_COLOR
           npm run test:recovery 2>&1 | tee .artifacts/browser-tests.log
+      - name: Verify and retain the development candidate package
+        run: |
+          set -o pipefail
+          python3 --version | tee .artifacts/package-python.log
+          npm run test:native-package 2>&1 | tee .artifacts/package-tests.log
+          npm run package:candidate -- --output .artifacts/native-package/terraphim-editor-0.1.0-dev.1.nimext 2>&1 | tee .artifacts/package-build.log
       - name: Retain actual component evidence, including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
