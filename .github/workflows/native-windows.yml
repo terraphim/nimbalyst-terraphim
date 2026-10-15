@@ -14,6 +14,22 @@ on:
         description: Verified SHA-256 of the retained .nimext package
         required: true
         type: string
+      shared_artifact:
+        description: Optional original shared candidate artifact ID; blank preserves the legacy Windows artifact route
+        required: false
+        type: string
+      shared_attempt:
+        description: Exact producer attempt for shared artifact
+        required: false
+        type: string
+      shared_digest:
+        description: Original shared artifact sha256 digest including prefix
+        required: false
+        type: string
+      shared_archive:
+        description: Original archive filename inside shared artifact
+        required: false
+        type: string
 permissions:
   contents: read
   actions: read
@@ -41,7 +57,17 @@ jobs:
           CANDIDATE_RUN: ${{ inputs.candidate_run }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
-        run: node scripts/native/verify-candidate.mjs $env:CANDIDATE_RUN $env:SOURCE_SHA $env:CANDIDATE_SHA256 .artifacts/native-windows
+          SHARED_ARTIFACT: ${{ inputs.shared_artifact }}
+          SHARED_ATTEMPT: ${{ inputs.shared_attempt }}
+          SHARED_DIGEST: ${{ inputs.shared_digest }}
+          SHARED_ARCHIVE: ${{ inputs.shared_archive }}
+        run: |
+          if ($env:SHARED_ARTIFACT) {
+            python scripts/native/fetch-shared-candidate.py --run $env:CANDIDATE_RUN --attempt $env:SHARED_ATTEMPT --artifact $env:SHARED_ARTIFACT --source $env:SOURCE_SHA --digest $env:SHARED_DIGEST --archive $env:SHARED_ARCHIVE --sha256 $env:CANDIDATE_SHA256 --destination .artifacts/native-windows
+          } else {
+            node scripts/native/verify-candidate.mjs $env:CANDIDATE_RUN $env:SOURCE_SHA $env:CANDIDATE_SHA256 .artifacts/native-windows
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run the official app with isolated profile and actual file outputs
         shell: pwsh
         env:
