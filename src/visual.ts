@@ -17,21 +17,24 @@ export async function verifyVisualAssets(assets:VisualAssets,manifest:VisualMani
  for(const name of VISUAL_ASSET_NAMES){if(!isCurrent())throw Error('Visual owner changed');const hash=await digest(copy[name]);if(!isCurrent())throw Error('Visual owner changed');if(hash!==expected[name].sha256)throw Error('Visual asset hash mismatch');}
  return{assets:copy,manifest:expected};
 }
-interface Surface {historyOwner:unknown;history:unknown[];historyIndex:number;onChange(callback:()=>void):()=>void;getText():string;undo():boolean;redo():boolean}
+interface Surface {historyOwner:unknown;history:unknown[];historyIndex:number;onChange(callback:()=>void):()=>void;getText():string;getSelectionOffsets():{start:number;end:number};undo():boolean;redo():boolean}
 interface Editor {
- markdownEditor:{surface:Surface;graphRoleSync:Promise<unknown>;loadThesaurus(text:string):unknown;alignDocumentModel(bindings:Bindings):void;documentKey:string;persistence?:unknown};
+ markdownEditor:{alternativeOp(name:string,...args:unknown[]):unknown;registerAlternativesProvider(provider:{id:string;model:string;alternatives:()=>string[]}):()=>void;surface:Surface;graphRoleSync:Promise<unknown>;loadThesaurus(text:string):unknown;alignDocumentModel(bindings:Bindings):void;documentKey:string;persistence?:unknown};
  rolegraph:{ready:Promise<unknown>;exportSnapshot():Promise<string>;importSnapshot(snapshot:string):Promise<unknown>};
  openDocument(source:string,name?:string):unknown;destroy():unknown;
 }
-interface Bindings {save_document():string;host_presentation_source(source:string):string}
+interface Bindings {kg_role_snapshot_json():string;save_document():string;host_presentation_source(source:string):string}
 interface VisualOptions {source:string;resource:string;isCurrent:()=>boolean;onChange:(source:string)=>void;onCommand:(command:'save'|'open')=>void}
+export interface AlternativeSelection {token:string;body:string;start:number;end:number;roleGeneration:string;selectionGeneration:number}
 export interface VisualRuntime {
+ captureAlternativeSelection():AlternativeSelection;checkAlternativePreview(token:string):void;acceptAlternativePreview(token:string,candidates:string[],provider:string,model:string):string;
  source():string;adopt(source:string,options:{canonical?:boolean;external?:boolean;recovery?:boolean}):void;
  setBlocked(blocked:boolean,reason?:string):void;graphSnapshot():Promise<string>;importGraphSnapshot(snapshot:string):Promise<string>;
  state():{historyOwner:unknown;historyEntries:number;historyIndex:number;blocked:boolean;workers:number;urls:number};dispose():void;
 }
 /** Called only after installer integrity verification, inside the isolated frame. */
 export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,options:VisualOptions):Promise<VisualRuntime>{
+ let selectionGeneration=0,lastSelection='';let preview:{selection:AlternativeSelection;source:string}|null=null;
  let disposed=false,blocked=false,suppress=false,editor:Editor|null=null,unsubscribe:(()=>void)|null=null;
  const urls:string[]=[],workers:Worker[]=[],abort=new AbortController();
  const root=document.createElement('main');root.className='terraphim-native-editor';
@@ -43,7 +46,14 @@ export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,
   if(disposed)return;disposed=true;abort.abort();unsubscribe?.();unsubscribe=null;
   try{editor?.destroy();}finally{for(const worker of workers)worker.terminate();workers.length=0;for(const value of urls)URL.revokeObjectURL(value);urls.length=0;root.remove();notice.remove();styles.remove();}
  };
+ const trackSelection=()=>{if(!editor)return;const value=JSON.stringify(editor.markdownEditor.surface.getSelectionOffsets());if(value!==lastSelection){lastSelection=value;selectionGeneration++;}};
  const source=()=>{guard();if(!editor)throw Error('Visual editor unavailable');editor.markdownEditor.alignDocumentModel(bindings);return bindings.save_document();};
+ const checkPreview=(token:string):AlternativeSelection=>{
+  guard();trackSelection();const captured=preview;if(blocked||!editor||!captured||captured.selection.token!==token)throw Error('Alternative preview is no longer current');
+    const current=editor.markdownEditor.surface.getSelectionOffsets(),selection=captured.selection;
+    if(source()!==captured.source||current.start!==selection.start||current.end!==selection.end||selectionGeneration!==selection.selectionGeneration||JSON.parse(bindings.kg_role_snapshot_json()).generation!==selection.roleGeneration){preview=null;throw Error('Text, selection or role changed; request fresh alternatives')}
+  return selection;
+ };
  const setBlocked=(value:boolean,reason='Editing paused until the host state is recovered.')=>{blocked=value;root.inert=value;notice.hidden=!value;notice.textContent=value?reason:'';};
  try{
   guard();document.head.append(styles);document.body.append(notice,root);
@@ -67,7 +77,9 @@ export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,
   editor.openDocument(options.source,options.resource);
   editor.markdownEditor.loadThesaurus(new TextDecoder('utf-8',{fatal:true}).decode(assets.defaultRole));
   await editor.rolegraph.ready;guard();await editor.markdownEditor.graphRoleSync;guard();
+  document.addEventListener('selectionchange',trackSelection,{signal:abort.signal});
   unsubscribe=editor.markdownEditor.surface.onChange(()=>{
+   preview=null;
    if(suppress||blocked||disposed)return;
    try{options.onChange(source());}catch(error){setBlocked(true,error instanceof Error?error.message:'The host refused this edit.');}
   });
@@ -80,6 +92,14 @@ export async function createVisualRuntime(assets:VisualAssets,bindings:Bindings,
   },{capture:true,signal:abort.signal});
   return{
    source,
+   checkAlternativePreview:token=>{checkPreview(token)},
+   captureAlternativeSelection(){guard();if(blocked||!editor)throw Error('Editor is not ready for external alternatives');trackSelection();const surface=editor.markdownEditor.surface,{start,end}=surface.getSelectionOffsets(),body=surface.getText(),role=JSON.parse(bindings.kg_role_snapshot_json());if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||start>=end||end>body.length||typeof role.generation!=='string'||!(/^(?:0|[1-9][0-9]{0,19})$/).test(role.generation))throw Error('Select current text before requesting alternatives');const selection={token:crypto.randomUUID(),body,start,end,roleGeneration:role.generation,selectionGeneration};preview={selection,source:source()};return{...selection}},
+   acceptAlternativePreview(token,candidates,provider,model){
+    const selection=checkPreview(token);
+    if(!/^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(provider)||typeof model!=='string'||!model||model.length>256||new TextDecoder().decode(new TextEncoder().encode(model))!==model||!Array.isArray(candidates)||candidates.length===0||candidates.length>10||candidates.some(value=>typeof value!=='string'||Array.from(value).length>1024||new TextDecoder().decode(new TextEncoder().encode(value))!==value)||new TextEncoder().encode(JSON.stringify(candidates)).byteLength>32768)throw Error('Invalid external alternatives');
+    preview=null;const providerId='nimbalyst:'+provider;const unregister=editor!.markdownEditor.registerAlternativesProvider({id:providerId,model,alternatives:()=>candidates});
+    try{editor!.markdownEditor.alternativeOp('append_alternatives',selection.start,selection.end,JSON.stringify({[providerId]:candidates.map(text=>({text,model}))}));return source()}finally{unregister()}
+   },
    adopt(value,meta){guard();if(!meta.recovery&&bindings.host_presentation_source(value)===source())return;
     if(!meta.external&&!meta.recovery)throw Error('Canonical host output differs; retain the current editor draft.');
     suppress=true;try{editor!.openDocument(value,options.resource);}finally{suppress=false;}

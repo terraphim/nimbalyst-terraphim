@@ -1,7 +1,7 @@
 /** Reconstructed opaque transport. Visual editor shell and native CSP remain separate gates. */
 import type {DraftSelection} from './recovery.ts';
 import {sourceBytes,sha256Utf8} from './source.ts';
-import {verifyVisualAssets,type VisualAssets,type VisualManifest} from './visual.ts';
+import {verifyVisualAssets,type VisualAssets,type VisualManifest,type AlternativeSelection} from './visual.ts';
 import type {ParentController,Envelope,Proposal,SaveReceipt} from './controller.ts';
 export const FRAME_ASSET_NAMES=['bootstrap','source','engineGlue','engineWasm','hostBridge'] as const;
 export type FrameAssetName=typeof FRAME_ASSET_NAMES[number];
@@ -49,6 +49,7 @@ interface HostSave {token:string;promise:Promise<SaveReceipt>;resolve:(receipt:S
 interface HostRestore {token:string;selection:DraftSelection;promise:Promise<Envelope>;resolve:(receipt:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;receipt:Envelope|null}
 interface RoleRequest {requestId:string;operation:'export'|'import';before:Envelope;promise:Promise<string>;resolve:(value:string)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean}
 function boundedRoleSnapshot(value:unknown):asserts value is string {if(typeof value!=='string'||new TextEncoder().encode(value).byteLength>4*1024*1024||new TextDecoder().decode(new TextEncoder().encode(value))!==value)throw Error('Invalid role snapshot size or encoding')}
+interface AIRequest {requestId:string;operation:'capture'|'check'|'accept';before:Envelope;resolve:(value:AlternativeSelection|Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean}
 interface HostReload {token:string;promise:Promise<Envelope>;resolve:(value:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;receipt:Envelope|null;failure:Error|null}
 /** Captured text for explicit copying; acceptedRevision does not make it a saved/ACKed source. */
 export interface CurrentDraft {resource:string;session:string;acceptedRevision:number;source:string;sourceHash:string}
@@ -57,6 +58,7 @@ interface DraftRead {requestId:string;resource:string;session:string;promise:Pro
 export class FrameTransport {
  readonly element:HTMLIFrameElement;readonly epoch=crypto.randomUUID();
  private port:MessagePort|null=null;private disposed=false;private initialized=false;private started=false;private busy=false;private lastId=0;
+ private aiRequest:AIRequest|null=null;
  private roleRequest:RoleRequest|null=null;private hostReload:HostReload|null=null;private hostSave:HostSave|null=null;private hostRestore:HostRestore|null=null;private draftRead:DraftRead|null=null;
  private options:FrameOptions;private readyListener:((event:MessageEvent)=>void)|null=null;private startupTimer:ReturnType<typeof setTimeout>|null=null;private ownerTimer:ReturnType<typeof setInterval>|null=null;
  private rejectStart:((error:Error)=>void)|null=null;private abortListener:()=>void;
@@ -103,6 +105,7 @@ export class FrameTransport {
  private reply(message:Record<string,unknown>):void {if(!this.current()){this.dispose();return;}try{this.port?.postMessage(serializeFrameControl({...message,frameEpoch:this.epoch}));}catch{this.port?.postMessage(serializeFrameControl({type:'transport-error',frameEpoch:this.epoch,id:null,reason:'Authoritative reply exceeds transport limit'}));}}
  /** Capture the frame's latest source through its existing bridge before the parent Save. */
  requestSave():Promise<SaveReceipt>{
+  if(this.aiRequest)return Promise.reject(Error('Alternative operation is in progress'));
   if(this.roleRequest)return Promise.reject(Error('Role operation is in progress'));
   if(this.hostReload)return Promise.reject(Error('Explicit reload is in progress'));
   if(this.hostRestore)return Promise.reject(Error('Recovery restoration is in progress'));
@@ -150,13 +153,25 @@ export class FrameTransport {
   this.draftRead=pending;this.reply({type:'host-read-draft',protocol:1,requestId:pending.requestId,resource:pending.resource,session:pending.session});return promise;
  }
  private finishDraftRead(pending:DraftRead,value?:CurrentDraft,error?:Error):void {if(this.draftRead!==pending)return;clearTimeout(pending.timer);this.draftRead=null;if(error)pending.reject(error);else if(value)pending.resolve(value);}
+ /** Capture a read-only selection; neither request nor preview appends candidates. */
+ captureAlternativeSelection():Promise<AlternativeSelection>{return this.requestAI('capture') as Promise<AlternativeSelection>}
+ /** Explicit acceptance delegates normalization, provenance and one undo step to Rust. */
+ acceptAlternativePreview(token:string,candidates:string[],provider:string,model:string):Promise<Envelope>{return this.requestAI('accept',{token,candidates,provider,model}) as Promise<Envelope>}
+ checkAlternativePreview(token:string):Promise<Envelope>{return this.requestAI('check',{token}) as Promise<Envelope>}
+ private requestAI(operation:'capture'|'check'|'accept',payload:Record<string,unknown>={}):Promise<AlternativeSelection|Envelope>{
+  if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
+  if(this.aiRequest||this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
+  let before:Envelope;try{before=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
+  return new Promise((resolve,reject)=>{const pending:AIRequest={requestId:crypto.randomUUID(),operation,before,resolve,reject,timedOut:false,timer:setTimeout(()=>{if(this.aiRequest!==pending)return;pending.timedOut=true;reject(Error('Alternative operation timed out; its outcome is not cancellation'));if(operation!=='accept')this.finishAI(pending);else this.reply({type:'transport-error',id:null,reason:'Alternative acceptance timed out; outcome is uncertain'})},this.options.requestTimeoutMs??30000)};this.aiRequest=pending;this.reply({type:'host-alternatives',protocol:1,requestId:pending.requestId,operation,resource:before.resource,session:before.session,revision:before.revision,sourceHash:before.sourceHash,...payload})});
+ }
+ private finishAI(pending:AIRequest,value?:AlternativeSelection|Envelope,error?:Error):void{if(this.aiRequest!==pending)return;clearTimeout(pending.timer);this.aiRequest=null;if(error)pending.reject(error);else if(value&&!pending.timedOut)pending.resolve(value)}
  /** Export the active role only; document alternatives never become shared-role input. */
  exportRoleSnapshot():Promise<string>{return this.requestRole('export')}
  /** The released coordinator validates and activates snapshots transactionally. */
  importRoleSnapshot(snapshot:string):Promise<string>{try{boundedRoleSnapshot(snapshot)}catch(error){return Promise.reject(error)}return this.requestRole('import',snapshot)}
  private requestRole(operation:'export'|'import',snapshot?:string):Promise<string>{
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
-  if(this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
+  if(this.aiRequest||this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
   let before:Envelope;try{before=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
   let resolve!:(value:string)=>void,reject!:(error:Error)=>void;const promise=new Promise<string>((yes,no)=>{resolve=yes;reject=no});
   const pending:RoleRequest={requestId:crypto.randomUUID(),operation,before,promise,resolve,reject,timedOut:false,timer:setTimeout(()=>{if(this.roleRequest!==pending)return;pending.timedOut=true;reject(Error('Role operation timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Role operation timed out; its outcome is not cancellation'})},this.options.requestTimeoutMs??30000)};
@@ -167,7 +182,7 @@ export class FrameTransport {
  reload(choice:{confirmed:boolean}):Promise<Envelope>{
   if(choice?.confirmed!==true)return Promise.reject(Error('Reload needs explicit confirmation'));
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
-  if(this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
+  if(this.aiRequest||this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
   let snapshot:Envelope;try{snapshot=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
   let resolve!:(value:Envelope)=>void,reject!:(error:Error)=>void;const promise=new Promise<Envelope>((yes,no)=>{resolve=yes;reject=no});
   const pending:HostReload={token:crypto.randomUUID(),promise,resolve,reject,timedOut:false,inFlight:false,receipt:null,failure:null,timer:setTimeout(()=>{if(this.hostReload!==pending)return;pending.timedOut=true;reject(Error('Reload timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Reload timed out; its outcome is not cancellation'})},this.options.requestTimeoutMs??30000)};
@@ -178,7 +193,7 @@ export class FrameTransport {
  restoreDraft(selection:DraftSelection,choice:{confirmed:boolean}):Promise<Envelope>{
   if(choice?.confirmed!==true)return Promise.reject(Error('Recovery restoration needs explicit confirmation'));
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
-  if(this.roleRequest||this.hostRestore||this.hostSave||this.hostReload)return Promise.reject(Error('Recovery restoration, reload or Save is already in progress'));
+  if(this.aiRequest||this.roleRequest||this.hostRestore||this.hostSave||this.hostReload)return Promise.reject(Error('Recovery restoration, reload or Save is already in progress'));
   let snapshot:Envelope;try{snapshot=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
   let resolve!:(receipt:Envelope)=>void,reject!:(error:Error)=>void;const promise=new Promise<Envelope>((yes,no)=>{resolve=yes;reject=no});
   const pending:HostRestore={token:crypto.randomUUID(),selection,promise,resolve,reject,timedOut:false,receipt:null,timer:setTimeout(()=>{if(this.hostRestore!==pending)return;pending.timedOut=true;pending.reject(Error('Recovery restoration timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Recovery restoration timed out'})},this.options.requestTimeoutMs??30000)};
@@ -190,7 +205,19 @@ export class FrameTransport {
  }
  private async receive(message:Record<string,unknown>):Promise<void>{
   if(!this.current()){this.dispose();return;}
-  if(message.type==='role-result'||message.type==='role-refused'){
+  if(message.type==='alternatives-result'||message.type==='alternatives-refused'){
+   const pending=this.aiRequest;if(!pending||message.protocol!==1||message.requestId!==pending.requestId||message.operation!==pending.operation||message.resource!==pending.before.resource||message.session!==pending.before.session)return;
+   try{
+    if(message.type==='alternatives-refused'){if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,reason,requestId,resource,session,type'||typeof message.reason!=='string'||message.reason.length>256)throw Error('Invalid alternative refusal');this.finishAI(pending,undefined,Error(message.reason));return}
+    const current=this.options.controller.snapshot();
+    if(message.revision!==current.revision||message.sourceHash!==current.sourceHash)throw Error('Alternative result is not the current accepted document');
+    if(pending.operation==='capture'){
+     if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,requestId,resource,revision,selection,session,sourceHash,type'||current.revision!==pending.before.revision||current.sourceHash!==pending.before.sourceHash)throw Error('Selection belongs to a changed document');
+     const selection=message.selection as AlternativeSelection;if(!selection||Object.keys(selection).sort().join()!=='body,end,roleGeneration,selectionGeneration,start,token'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(selection.token)||typeof selection.roleGeneration!=='string'||!(/^(?:0|[1-9][0-9]{0,19})$/).test(selection.roleGeneration)||!Number.isSafeInteger(selection.selectionGeneration)||selection.selectionGeneration<0)throw Error('Invalid alternative selection');sourceBytes(selection.body);if(!Number.isSafeInteger(selection.start)||!Number.isSafeInteger(selection.end)||selection.start<0||selection.start>=selection.end||selection.end>selection.body.length)throw Error('Invalid alternative range');this.finishAI(pending,{...selection});
+    }else{if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,requestId,resource,revision,session,sourceHash,type'||current.revision<pending.before.revision||(pending.operation==='check'&&current.revision!==pending.before.revision)||this.options.controller.state().error==='host_state_failed')throw Error('Invalid alternative acceptance');this.finishAI(pending,current);if(pending.timedOut)this.reply({type:'transport-error',id:null,reason:'Alternative acceptance completed after its deadline'})}
+   }catch(error){this.finishAI(pending,undefined,error instanceof Error?error:Error('Invalid alternative response'))}return;
+  }
+  if(message.type==='role-result' ||message.type==='role-refused'){
    const pending=this.roleRequest;if(!pending||message.protocol!==1||message.requestId!==pending.requestId||message.resource!==pending.before.resource||message.session!==pending.before.session||message.operation!==pending.operation)return;
    try{
     if(message.type==='role-refused'){if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,reason,requestId,resource,session,type'||typeof message.reason!=='string'||message.reason.length>256)throw Error('Invalid role refusal');this.finishRole(pending,undefined,Error(message.reason));return;}
@@ -264,7 +291,7 @@ export class FrameTransport {
  /** Explicit owner synchronization; blocking states never replace an unsaved frame draft. */
  synchronize():void {if(this.hostReload)return;if(!this.current()){this.dispose();throw Error('Frame disposed');}const state=this.options.controller.state();if(['conflict','uncertain','recovery_pending'].includes(state.mode)||state.error==='host_state_failed'){this.reply({type:'transport-error',reason:state.error==='host_state_failed'?state.error:state.mode,id:null});return;}this.reply({...this.options.controller.snapshot(),type:'sync'});}
  dispose():void {
-  if(this.disposed)return;this.disposed=true;if(this.roleRequest)this.finishRole(this.roleRequest,undefined,Error('Frame disposed'));if(this.hostReload)this.finishReload(this.hostReload,Error('Frame disposed'));if(this.draftRead)this.finishDraftRead(this.draftRead,undefined,Error('Frame disposed'));if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
+  if(this.disposed)return;this.disposed=true;if(this.aiRequest)this.finishAI(this.aiRequest,undefined,Error('Frame disposed'));if(this.roleRequest)this.finishRole(this.roleRequest,undefined,Error('Frame disposed'));if(this.hostReload)this.finishReload(this.hostReload,Error('Frame disposed'));if(this.draftRead)this.finishDraftRead(this.draftRead,undefined,Error('Frame disposed'));if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
   this.options.signal?.removeEventListener('abort',this.abortListener);if(this.readyListener)removeEventListener('message',this.readyListener);this.readyListener=null;
   try{this.port?.postMessage(serializeFrameControl({type:'dispose',frameEpoch:this.epoch}));}catch{}this.port?.close();this.port=null;this.element.remove();this.options.controller.dispose();this.rejectStart?.(Error('Frame disposed'));this.rejectStart=null;
  }

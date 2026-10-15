@@ -4,9 +4,10 @@ interface Init {assets:Record<string,Uint8Array<ArrayBuffer>>;snapshot:{protocol
 /** Verified bytes arrive from the constant opaque installer. */
 export async function activate(init:Init,port:MessagePort,epoch:string){
  const LIMIT=16*1024*1024;const urls:string[]=[];let disposed=false;let deadline:ReturnType<typeof setTimeout>|null=null;let activeId:number|null=null;let activeRequest:any=null;let commandQueued=false;
+ let aiAcceptance:{requestId:string;source:string}|null=null;
  let restoreToken:string|null=null,reloadToken:string|null=null,roleRequestId:string|null=null;
  let visual:VisualRuntime|null=null;let hostSaveToken:string|null=null,hostSaveGeneration=0;const saveTokens:Array<{token:string;generation:number}|null>=[];
- const visualStatus=()=>visual?.setBlocked(restoreToken!==null||reloadToken!==null||roleRequestId!==null||['uncertain','conflict','closed'].includes(status),reason??undefined);
+ const visualStatus=()=>visual?.setBlocked(aiAcceptance!==null||restoreToken!==null||reloadToken!==null||roleRequestId!==null||['uncertain','conflict','closed'].includes(status),reason??undefined);
  let status='starting',reason:string|null=null,conflictDraft:string|null=null;let bridge:any=null;let engine:any=null;
  const send=(value:unknown)=>{const text=JSON.stringify(value);if(text.length>LIMIT||new TextEncoder().encode(text).length>LIMIT)throw Error('Frame request too large');port.postMessage(text);};
  const parse=(value:unknown)=>{if(typeof value!=='string'||value.length>LIMIT||new TextEncoder().encode(value).length>LIMIT)throw Error('Invalid authoritative message size');const data=JSON.parse(value);if(!data||typeof data!=='object'||Array.isArray(data))throw Error('Invalid authoritative message');return data;};
@@ -27,12 +28,23 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
   port.onmessage=(event:MessageEvent)=>{
    if(disposed)return;let message:any;try{message=parse(event.data);}catch{status='uncertain';reason='Invalid authoritative message';visualStatus();return;}
    if(message.frameEpoch!==epoch)return;if(message.type==='dispose'){cleanup();return;}
+   if(message.type==='host-alternatives'){
+    const expected=message.operation==='capture'?'frameEpoch,operation,protocol,requestId,resource,revision,session,sourceHash,type':message.operation==='check'?'frameEpoch,operation,protocol,requestId,resource,revision,session,sourceHash,token,type':'candidates,frameEpoch,model,operation,protocol,provider,requestId,resource,revision,session,sourceHash,token,type';
+    if(Object.keys(message).sort().join()!==expected||!['capture','check','accept'].includes(message.operation)||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.requestId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.requestId))return;
+    const refuse=(reason:string)=>send({type:'alternatives-refused',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:message.operation,resource:s.resource,session:s.session,reason:reason.slice(0,256)});
+    try{
+     const before=JSON.parse(engine.snapshot());if(!visual||aiAcceptance||roleRequestId||reloadToken||restoreToken||activeId!==null||commandQueued||['uncertain','conflict','closed'].includes(status)||message.revision!==before.revision||message.sourceHash!==before.sourceHash)throw Error('Alternatives need the current settled frame');
+     if(message.operation==='capture'){const selection=visual.captureAlternativeSelection();send({type:'alternatives-result',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:'capture',resource:s.resource,session:s.session,revision:before.revision,sourceHash:before.sourceHash,selection})}
+     else if(message.operation==='check'){visual.checkAlternativePreview(message.token);send({type:'alternatives-result',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:'check',resource:s.resource,session:s.session,revision:before.revision,sourceHash:before.sourceHash})}
+     else{const text=visual.acceptAlternativePreview(message.token,message.candidates,message.provider,message.model);aiAcceptance={requestId:message.requestId,source:text};visualStatus();if(activeId===null){const after=JSON.parse(engine.snapshot());if(after.source!==text)throw Error('Alternative proposal was not accepted');send({type:'alternatives-result',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:'accept',resource:s.resource,session:s.session,revision:after.revision,sourceHash:after.sourceHash});aiAcceptance=null;visualStatus()}}
+    }catch(error){aiAcceptance=null;visualStatus();refuse(error instanceof Error?error.message:'Alternatives refused')}return;
+   }
    if(message.type==='host-role'){
     const expected=message.operation==='import'?'frameEpoch,operation,protocol,requestId,resource,revision,session,snapshot,sourceHash,type':'frameEpoch,operation,protocol,requestId,resource,revision,session,sourceHash,type';
     if(Object.keys(message).sort().join()!==expected||!['import','export'].includes(message.operation)||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.requestId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.requestId))return;
     const refuse=(reason:string)=>send({type:'role-refused',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:message.operation,resource:s.resource,session:s.session,reason:reason.slice(0,256)});
     const before=JSON.parse(engine.snapshot());
-    if(!visual||roleRequestId||reloadToken||restoreToken||activeId!==null||commandQueued||status==='closed'||(message.operation==='import'&&['uncertain','conflict'].includes(status))||message.revision!==before.revision||message.sourceHash!==before.sourceHash){refuse('Role operation needs the current settled frame');return;}
+    if(!visual||aiAcceptance||roleRequestId||reloadToken||restoreToken||activeId!==null||commandQueued||status==='closed'||(message.operation==='import'&&['uncertain','conflict'].includes(status))||message.revision!==before.revision||message.sourceHash!==before.sourceHash){refuse('Role operation needs the current settled frame');return;}
     const bounded=(value:any)=>{if(typeof value!=='string'||new TextEncoder().encode(value).byteLength>4*1024*1024||new TextDecoder().decode(new TextEncoder().encode(value))!==value)throw Error('Invalid role snapshot size or encoding')};
     const visualBefore=visual.source();roleRequestId=message.requestId;visualStatus();void(async()=>{
      try{if(message.operation==='import')bounded(message.snapshot);const snapshot=message.operation==='import'?await visual!.importGraphSnapshot(message.snapshot):await visual!.graphSnapshot();if(disposed||roleRequestId!==message.requestId)return;bounded(snapshot);const after=JSON.parse(engine.snapshot());if(after.revision!==before.revision||after.sourceHash!==before.sourceHash||visual!.source()!==visualBefore)throw Error('Role operation changed the document');send({type:'role-result',frameEpoch:epoch,protocol:1,requestId:message.requestId,operation:message.operation,resource:s.resource,session:s.session,revision:after.revision,sourceHash:after.sourceHash,snapshot})}
@@ -44,7 +56,7 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
     if(message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
     if(message.type==='host-reload'){
      if(Object.keys(message).sort().join()!=='frameEpoch,protocol,resource,session,token,type')return;
-     if(roleRequestId||reloadToken||restoreToken||activeId!==null||commandQueued||status==='closed'){send({type:'host-reload-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:'Frame operation is still unsettled'});return;}
+     if(aiAcceptance||roleRequestId||reloadToken||restoreToken||activeId!==null||commandQueued||status==='closed'){send({type:'host-reload-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:'Frame operation is still unsettled'});return;}
      reloadToken=message.token;visualStatus();const current=JSON.parse(engine.snapshot());send({type:'host-reload-ready',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:reloadToken,revision:current.revision,sourceHash:current.sourceHash});return;
     }
     if(message.token!==reloadToken)return;
@@ -68,7 +80,7 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
    if(message.type==='host-restore'){
     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,resource,session,token,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
     const refuse=(reason:string)=>send({type:'host-restore-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:reason.slice(0,256)});
-    if(roleRequestId||reloadToken||restoreToken||commandQueued||['uncertain','conflict','closed'].includes(status)){refuse('Frame is not ready for recovery restoration');return;}
+    if(aiAcceptance||roleRequestId||reloadToken||restoreToken||commandQueued||['uncertain','conflict','closed'].includes(status)){refuse('Frame is not ready for recovery restoration');return;}
     try{client.submit(visual?.source()??bridge.latest);restoreToken=message.token;visualStatus();bridge.command('export')}catch(error){restoreToken=null;visualStatus();refuse(error instanceof Error?error.message:'Recovery restoration refused')}
     return;
    }
@@ -103,11 +115,12 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
      if(message.type==='command-complete'){const current=JSON.parse(engine.snapshot());if(current.sourceHash!==message.sourceHash||current.source!==message.source)throw Error('Recovery adoption mismatch');send({type:'host-restore-applied',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:completedRestore,revision:current.revision,sourceHash:current.sourceHash})}
      restoreToken=null;
     }
+    if(aiAcceptance&&completing){const pending=aiAcceptance,current=JSON.parse(engine.snapshot());aiAcceptance=null;if(message.type==='ack'&&current.source===pending.source)send({type:'alternatives-result',frameEpoch:epoch,protocol:1,requestId:pending.requestId,operation:'accept',resource:s.resource,session:s.session,revision:current.revision,sourceHash:current.sourceHash});else send({type:'alternatives-refused',frameEpoch:epoch,protocol:1,requestId:pending.requestId,operation:'accept',resource:s.resource,session:s.session,reason:'The host refused the accepted alternatives'})}
    }catch{status='uncertain';reason='Invalid authoritative response';}finally{visualStatus();}
   };port.start();addEventListener('pagehide',()=>cleanup(),{once:true});
   const client={
-   submit(text:string){if(roleRequestId)throw Error('Role operation is in progress');if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not editable');source.sourceBytes(text);bridge.submit(text);},
-   save(){if(roleRequestId)throw Error('Role operation is in progress');if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;saveTokens.push(null);try{bridge.command('save');}catch(error){saveTokens.pop();commandQueued=false;throw error;}},
+   submit(text:string){if(aiAcceptance)throw Error('Alternative acceptance is in progress');if(roleRequestId)throw Error('Role operation is in progress');if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not editable');source.sourceBytes(text);bridge.submit(text);},
+   save(){if(aiAcceptance)throw Error('Alternative acceptance is in progress');if(roleRequestId)throw Error('Role operation is in progress');if(reloadToken)throw Error('Explicit reload is in progress');if(restoreToken)throw Error('Recovery restoration is in progress');if(disposed||status==='uncertain'||status==='conflict')throw Error('Frame is not writable');if(commandQueued)return;commandQueued=true;saveTokens.push(null);try{bridge.command('save');}catch(error){saveTokens.pop();commandQueued=false;throw error;}},
    open(){throw Error('Open is unsupported by the released host contract');},
   };
   if(init.visual){const module=await import(url(init.visual.assets.runtime));if(disposed)throw Error('Frame disposed');visual=await module.createVisualRuntime(init.visual.assets,wasm,{source:s.source,resource:s.resource,isCurrent:()=>!disposed,onChange:(text:string)=>client.submit(text),onCommand:(command:'save'|'open')=>client[command]()});if(disposed){visual?.dispose();throw Error('Frame disposed')}}

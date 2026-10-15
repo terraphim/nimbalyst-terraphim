@@ -34,7 +34,7 @@ def collect(root):
     if not stat.S_ISREG(manifest_path.lstat().st_mode):
         raise ValueError('Manifest is not a regular file')
     manifest = json.loads(manifest_path.read_bytes())
-    if set(manifest) != {'id', 'name', 'version', 'description', 'main', 'styles', 'apiVersion', 'permissions', 'contributions'} or manifest['id'] != 'terraphim-editor' or manifest['version'] != '0.1.0-dev.1' or manifest['main'] != 'dist/index.js' or manifest['styles'] != 'dist/index.css' or manifest['apiVersion'] != '1.0.0' or manifest['permissions'] != {'filesystem': True} or manifest['contributions'] != {'customEditors': [{'filePatterns': ['*.terraphim.md'], 'displayName': 'Terraphim Editor', 'component': 'TerraphimEditor', 'supportsSourceMode': False, 'supportsDiffMode': False, 'supportsTranscriptEmbed': False, 'collaboration': {'supported': False}}]}:
+    if set(manifest) != {'id', 'name', 'version', 'description', 'main', 'styles', 'apiVersion', 'permissions', 'contributions'} or manifest['id'] != 'terraphim-editor' or manifest['version'] != '0.1.0-dev.1' or manifest['main'] != 'dist/index.js' or manifest['styles'] != 'dist/index.css' or manifest['apiVersion'] != '1.0.0' or manifest['permissions'] != {'filesystem': True, 'ai': True} or manifest['contributions'] != {'customEditors': [{'filePatterns': ['*.terraphim.md'], 'displayName': 'Terraphim Editor', 'component': 'TerraphimEditor', 'supportsSourceMode': False, 'supportsDiffMode': False, 'supportsTranscriptEmbed': False, 'collaboration': {'supported': False}}]}:
         raise ValueError('Unreviewed native manifest or permissions')
     files = {'manifest.json': manifest_path.read_bytes()}
     dist = root / 'dist'

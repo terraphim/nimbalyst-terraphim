@@ -78,6 +78,10 @@ class NativePackageTests(unittest.TestCase):
     if row['path']=='dist/licenses/terraphim.txt':row.update(bytes=path.stat().st_size,sha256=pkg.sha(path.read_bytes()))
    (root/'dist/assets.json').write_text(json.dumps(m))
   self.altered_source(change)
+ def test_refuses_missing_ai_permission(self):
+  def change(root):
+   path=root/'manifest.json';m=json.loads(path.read_bytes());m['permissions'].pop('ai');path.write_text(json.dumps(m))
+  self.altered_source(change)
  def test_refuses_extra_permissions(self):
   def change(root):
    path=root/'manifest.json';m=json.loads(path.read_bytes());m['permissions']['shell']=True;path.write_text(json.dumps(m))

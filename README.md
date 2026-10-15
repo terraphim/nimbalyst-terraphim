@@ -2,7 +2,7 @@
 
 This repository contains the in-progress components for a Nimbalyst editor that reuses Terraphim's Rust/WASM engine. The development `.nimext` candidate can be built and inspected; native application qualification and a public package release remain pending.
 
-The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Parent controls provide Save, fresh-file export dialogs with cancellation/focus restoration, and recovery list/copy/explicit-discard even when editing is unavailable. The native React entry assembles these components. Recovery restoration, role controls, optional AI alternatives and installed-app acceptance remain in progress.
+The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Parent controls provide Save, fresh-file export dialogs with cancellation/focus restoration, and recovery list/copy/explicit-discard even when editing is unavailable. The native React entry assembles these components. Recovery restoration and explicit local role controls are implemented at component level; installed-app acceptance remains in progress.
 
 ## Run the component tests
 
@@ -53,3 +53,9 @@ npm run package:candidate -- --output .artifacts/native-package/terraphim-editor
 CI runs these checks on Linux, macOS and Windows and retains a development `.nimext` archive with its file hashes, SDK validation and actual browser output records. Existing archive destinations are refused. The package includes unchanged dependency licences and uses no remote runtime assets.
 
 The compiled-entry browser check creates an alternative, saves and reopens the actual annotated file, then reads the clean Markdown and same-concept synonym graph from disk. This remains component evidence: native Nimbalyst installation, clipboard behavior, recovery restoration, role controls, supported Open, all 41 requirements on three operating systems and release/catalog admission are not yet qualified. No release or marketplace publishing job runs from this component workflow.
+
+### Optional external AI
+
+Local knowledge-graph alternatives remain available offline. The native entry connects Nimbalyst’s configured AI service through the supported SDK lifecycle and an explicit per-editor opt-in. External requests are limited to the selection plus its paragraph (2,000 Unicode code points); candidates are previewed before explicit acceptance through the existing Rust provider/history path.
+
+External AI is unavailable in this candidate: no exact host/provider combination has completed live qualification, and SDK 0.7.0 supplies no supported host-version identity. The qualification list remains empty, so the controls cannot send a request. The AI permission exposes the host service; it does not enable requests automatically.
