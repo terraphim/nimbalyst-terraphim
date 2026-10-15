@@ -1,5 +1,6 @@
 /** Actual released desktop-app UI only. Refuse unattended onboarding agreements. */
 import {chromium} from '@playwright/test';
+import {nativeFailureStatus} from './result.mjs';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
@@ -37,8 +38,9 @@ try {
  await page.reload({waitUntil:'domcontentloaded'});await safeOnboarding();await page.getByText('brief.terraphim.md',{exact:true}).first().dblclick();await surface.waitFor({state:'visible'});assert.match(await surface.innerText(),/Concern requires a Decision/);assert.deepEqual(await readFile(sourcePath),saved);result.steps.push('Actual renderer reload and reopen retain exact saved source');await page.screenshot({path:join(evidence,'03-reopened.png')});
  result.status='PASS_BOUNDED_ACTUAL_NATIVE_LIFECYCLE';
 } catch(error) {
- result.status=String(error).includes('BLOCKED_ONBOARDING')?'BLOCKED_ONBOARDING':'FAIL';result.error=String(error);process.exitCode=1;
+ result.error=String(error);process.exitCode=1;
  if(page){result.visibleText=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:join(evidence,'failure.png')}).catch(()=>{})}
+ result.status=nativeFailureStatus(error,result.visibleText);
 } finally {
  result.completedAt=new Date().toISOString();await writeFile(join(evidence,'native-receipt.json'),JSON.stringify(result,null,2)+'\n');
  // The dedicated launcher owns process cleanup; closing this CDP connection must not fabricate a save.
