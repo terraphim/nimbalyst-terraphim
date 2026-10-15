@@ -1,0 +1,62 @@
+// Actual parent DOM actions with real Rust, IndexedDB and filesystem outputs.
+import {test,expect,type Page} from '@playwright/test';
+import {readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {exportFixture} from './export-fixture.ts';
+async function controls(page:Page,editing=true){
+ await page.evaluate(async editing=>{const w=window as any,container=document.createElement('main');document.body.append(container);const controlModule='/src/controls.ts';const{ParentControls}=await import(controlModule);
+ if(editing){const frameModule='/src/frame.ts';const{FrameTransport}=await import(frameModule),raw=await(await fetch('/contracts/frame/manifest.json')).json(),assets:any={},manifest:any={};for(const[name,item]of Object.entries(raw)as any){assets[name]=new Uint8Array(await(await fetch(item.url)).arrayBuffer());manifest[name]={sha256:item.sha256,bytes:item.bytes}}const frameContainer=document.createElement('section');document.body.append(frameContainer);w.transport=await FrameTransport.start({container:frameContainer,controller:w.controller,isCurrent:()=>w.active,assets,manifest});const exportsModule='/src/exports.ts';const{ExportCoordinator}=await import(exportsModule);w.exporter.dispose();w.exporter=new ExportCoordinator({controller:w.controller,host:w.host,supports:w.controllerOptions.supports,isCurrent:()=>w.active,derive:(source:string)=>w.deriver.derive(source),saveBarrier:()=>w.transport.requestSave()});}
+ w.controls=new ParentControls({container,isCurrent:()=>w.active,recovery:w.recovery,scope:{workspace:w.host.workspaceId,resource:w.host.filePath},copyText:(text:string)=>w.copyOutput(text),editing:editing?{controller:w.controller,frame:w.transport,exporter:w.exporter}:undefined});
+ },editing);
+}
+async function fixture(page:Page){const f=await exportFixture(page);const copied=join(f.workspace,'copied-draft.txt');await page.exposeBinding('copyOutput',async(_,text:string)=>writeFile(copied,text));return{...f,copied,cleanup:async()=>{await page.evaluate(()=>{const w=window as any;w.controls?.dispose();w.transport?.dispose()}).catch(()=>{});await f.cleanup()}}}
+async function draft(page:Page,source='Unsaved concern\n'){
+ return page.evaluate(async source=>{const w=window as any;return await w.recovery.put({identity:{workspace:w.host.workspaceId,resource:w.host.filePath,session:crypto.randomUUID()},source,baselineHash:w.controller.snapshot().sourceHash,revision:1})},source);
+}
+
+test('parent Save button flushes a real frame edit and displays only verified Saved',async({page})=>{
+ const f=await fixture(page);try{await controls(page);const frame=page.frames().find(x=>x!==page.mainFrame())!;await frame.evaluate(()=>(window as any).TerraphimFrameClient.submit('Concern from controls\n'));await page.getByRole('button',{name:'Save',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Saved');expect(await f.read()).toBe('Concern from controls\n');expect(f.writes).toEqual(['Concern from controls\n']);}finally{await f.cleanup()}
+});
+
+test('cancelled export creates nothing and restores keyboard focus',async({page})=>{
+ const f=await fixture(page);try{await controls(page);const button=page.getByRole('button',{name:'Export knowledge graph',exact:true});await button.click();await expect(page.getByRole('dialog')).toBeVisible();await expect(page.getByRole('textbox',{name:'New filename'})).toBeFocused();await page.getByRole('button',{name:'Cancel',exact:true}).click();await expect(button).toBeFocused();expect(f.writes).toEqual([]);expect(f.edits).toEqual([]);await button.click();await page.getByRole('textbox',{name:'New filename'}).press('Escape');await expect(button).toBeFocused();expect(f.edits).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('parent export dialogs save actual annotated source then create real clean and same-ID graph files',async({page})=>{
+ const f=await fixture(page);try{await page.evaluate(()=>(window as any).author());await controls(page);for(const[kind,name]of[['Export clean Markdown','controls.clean.md'],['Export knowledge graph','controls.knowledge-graph.json']]){await page.getByRole('button',{name:kind,exact:true}).click();await page.getByRole('textbox',{name:'New filename'}).fill(name);await page.getByRole('button',{name:'Create export',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Created '+name)}
+ const source=await f.read(),clean=await f.readDestination('controls.clean.md'),text=await f.readDestination('controls.knowledge-graph.json'),graph=JSON.parse(text);expect(source).toContain('terraphim');expect(clean).toBe('Concern requires a Decision.\n');expect(graph.data.concern.id).toBe(graph.data.risk.id);expect(f.edits).toHaveLength(2);for(const[name,body,type]of[['parent-controls-source.md',source,'text/markdown'],['parent-controls-clean.md',clean,'text/markdown'],['parent-controls-graph.json',text,'application/json']])await test.info().attach(name,{body,contentType:type});
+ }finally{await f.cleanup()}
+});
+
+test('existing destination refusal leaves bytes intact and is visible in parent status',async({page})=>{
+ const f=await fixture(page);try{await writeFile(f.destination('existing.json'),'User content\n');await controls(page);await page.getByRole('button',{name:'Export knowledge graph',exact:true}).click();await page.getByRole('textbox',{name:'New filename'}).fill('existing.json');await page.getByRole('button',{name:'Create export',exact:true}).click();await expect(page.getByRole('status')).toContainText('destination_exists');expect(await f.readDestination('existing.json')).toBe('User content\n');expect(f.edits).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('read-only admission exposes actual recovery copy and explicit selected-record discard',async({page})=>{
+ const f=await fixture(page);try{const saved=await draft(page);await controls(page,false);await expect(page.getByRole('button',{name:'Save',exact:true})).toBeDisabled();await page.getByRole('button',{name:'Recovery drafts',exact:true}).click();await page.getByRole('button',{name:'Copy draft',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Copied recovery draft');expect(await readFile(f.copied,'utf8')).toBe(saved.source);await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('button',{name:'Keep draft',exact:true}).click();expect(await page.evaluate(async()=>{const w=window as any;return(await w.recovery.list({workspace:w.host.workspaceId})).length})).toBe(1);await page.getByRole('button',{name:'Refresh drafts',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('button',{name:'Confirm discard',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Draft discarded');expect(await page.evaluate(async()=>{const w=window as any;return(await w.recovery.list({workspace:w.host.workspaceId})).length})).toBe(0);expect(f.writes).toEqual([]);expect(await f.read()).toBe('Risk requires a Decision.\n');}finally{await f.cleanup()}
+});
+
+test('corrupt structured-clone draft stays inspectable and explicitly discardable without editing',async({page})=>{
+ const f=await fixture(page);try{await page.evaluate(async()=>{const w=window as any;await new Promise<void>((resolve,reject)=>{const q=indexedDB.open(w.recovery.databaseName,1);q.onsuccess=()=>{const db=q.result,tx=db.transaction('drafts','readwrite'),bad:any={source:'Preserve me',counter:2n};bad.self=bad;tx.objectStore('drafts').put(bad,[1,w.recovery.extensionId,w.host.workspaceId,w.host.filePath,'corrupt']);tx.oncomplete=()=>{db.close();resolve()};tx.onabort=()=>reject(tx.error)}})});await controls(page,false);await page.getByRole('button',{name:'Recovery drafts',exact:true}).click();await expect(page.getByRole('heading',{name:'Corrupt recovery record'})).toBeVisible();await page.getByRole('button',{name:'Copy inspection summary'}).click();await expect(page.getByRole('status')).toHaveText('Copied recovery draft');expect(JSON.parse(await readFile(f.copied,'utf8')).sourceExcerpt).toBe('Preserve me');await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('button',{name:'Confirm discard',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Draft discarded');expect(f.writes).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('a newer actual draft cannot be discarded by its stale visible selection',async({page})=>{
+ const f=await fixture(page);try{const saved=await draft(page);await controls(page,false);await page.getByRole('button',{name:'Recovery drafts',exact:true}).click();await expect(page.getByRole('button',{name:'Discard draft',exact:true})).toBeVisible();await page.evaluate(async saved=>{const w=window as any;await w.recovery.put({...saved,revision:2,source:'Newer draft\n'})},saved);await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('button',{name:'Confirm discard',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Draft changed; refresh before discarding');expect(await page.evaluate(async()=>{const w=window as any;return(await w.recovery.list({workspace:w.host.workspaceId}))[0].record.source})).toBe('Newer draft\n');expect(f.writes).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('disposal removes parent controls and closes an open dialog without writes',async({page})=>{
+ const f=await fixture(page);try{await controls(page);await page.getByRole('button',{name:'Export knowledge graph',exact:true}).click();await page.evaluate(()=>(window as any).controls.dispose());await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByRole('region',{name:'Terraphim document controls'})).toHaveCount(0);expect(f.writes).toEqual([]);expect(f.edits).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('a detached confirmation cannot delete a draft after controls disposal',async({page})=>{
+ const f=await fixture(page);try{await draft(page);await controls(page,false);await page.getByRole('button',{name:'Recovery drafts',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await page.getByRole('button',{name:'Confirm discard',exact:true}).evaluate(button=>{const w=window as any;w.controls.dispose();(button as HTMLButtonElement).click()});expect(await page.evaluate(async()=>{const w=window as any;return(await w.recovery.list({workspace:w.host.workspaceId})).length})).toBe(1);expect(f.writes).toEqual([]);}finally{await f.cleanup()}
+});
+
+test('failed export retains its actual created path for inspection',async({page})=>{
+ const f=await fixture(page);try{f.afterWrite(async path=>{await writeFile(path,'Changed after creation\n')});await controls(page);await page.getByRole('button',{name:'Export knowledge graph',exact:true}).click();await page.getByRole('textbox',{name:'New filename'}).fill('inspect.json');await page.getByRole('button',{name:'Create export',exact:true}).click();await expect(page.getByRole('status')).toHaveText('Export failed: Export readback_failed Inspect inspect.json; a file may have been created.');expect(await f.readDestination('inspect.json')).toBe('Changed after creation\n');expect(f.edits).toHaveLength(1);}finally{await f.cleanup()}
+});
+
+test('an already-disposed owner leaves no parent refresh timer or controls',async({page})=>{
+ await page.addInitScript(()=>{const create=window.setInterval.bind(window),clear=window.clearInterval.bind(window),timers=new Set<number>();(window as any).controlTimers=timers;window.setInterval=((...args:any[])=>{const id=create(...args as [TimerHandler,number?]);timers.add(id);return id})as typeof window.setInterval;window.clearInterval=((id:any)=>{if(typeof id==='number')timers.delete(id);clear(id)})as typeof window.clearInterval});
+ const f=await fixture(page);try{await page.evaluate(()=>(window as any).active=false);await controls(page,false);expect(await page.evaluate(()=>(window as any).controlTimers.size)).toBe(0);await expect(page.getByRole('region',{name:'Terraphim document controls'})).toHaveCount(0);}finally{await f.cleanup()}
+});
