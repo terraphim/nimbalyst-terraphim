@@ -27,6 +27,11 @@ export async function activate(init:Init,port:MessagePort,epoch:string){
   port.onmessage=(event:MessageEvent)=>{
    if(disposed)return;let message:any;try{message=parse(event.data);}catch{status='uncertain';reason='Invalid authoritative message';visualStatus();return;}
    if(message.frameEpoch!==epoch)return;if(message.type==='dispose'){cleanup();return;}
+   if(message.type==='host-read-draft'){
+    if(Object.keys(message).sort().join()!=='frameEpoch,protocol,requestId,resource,session,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.requestId!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.requestId))return;
+    try{const text=conflictDraft??visual?.source()??bridge.latest;source.sourceBytes(text);send({type:'draft-snapshot',frameEpoch:epoch,protocol:1,requestId:message.requestId,resource:s.resource,session:s.session,acceptedRevision:JSON.parse(engine.snapshot()).revision,source:text})}
+    catch(error){send({type:'draft-read-refused',frameEpoch:epoch,protocol:1,requestId:message.requestId,resource:s.resource,session:s.session,reason:(error instanceof Error?error.message:'Current draft unavailable').slice(0,256)})}return;
+   }
    if(message.type==='host-restore'){
     if(Object.keys(message).sort().join()!=='frameEpoch,protocol,resource,session,token,type'||message.protocol!==1||message.resource!==s.resource||message.session!==s.session||typeof message.token!=='string'||!(/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/).test(message.token))return;
     const refuse=(reason:string)=>send({type:'host-restore-refused',frameEpoch:epoch,protocol:1,resource:s.resource,session:s.session,token:message.token,reason:reason.slice(0,256)});

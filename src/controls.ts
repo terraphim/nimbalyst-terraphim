@@ -15,13 +15,14 @@ export class ParentControls {
  readonly element:HTMLElement;
  private closed=false;private busy=false;private listing=0;private timer:ReturnType<typeof setInterval>;
  private status:HTMLElement;private recoveryPanel:HTMLElement;private draftRows:HTMLElement;
- private actions:HTMLButtonElement[]=[];private dialog:HTMLDialogElement|null=null;private lastState='';
+ private copyCurrent:HTMLButtonElement;private actions:HTMLButtonElement[]=[];private dialog:HTMLDialogElement|null=null;private lastState='';
  constructor(private readonly options:ParentControlsOptions){
   if(!(options.container instanceof HTMLElement)||!options.container.isConnected||typeof options.isCurrent!=='function'||typeof options.copyText!=='function')throw Error('Controls unavailable');
   this.element=document.createElement('section');this.element.setAttribute('aria-label','Terraphim document controls');
   const toolbar=document.createElement('div');toolbar.setAttribute('role','toolbar');toolbar.setAttribute('aria-label','Document actions');
   const button=(label:string,action:()=>void)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',action);toolbar.append(b);return b;};
   this.actions.push(button('Save',()=>void this.save()),button('Export clean Markdown',()=>this.openExport('clean')),button('Export knowledge graph',()=>this.openExport('knowledgeGraph')));
+  this.copyCurrent=button('Copy current draft',()=>void this.copyCurrentDraft());
   button('Recovery drafts',()=>{this.recoveryPanel.hidden=!this.recoveryPanel.hidden;if(!this.recoveryPanel.hidden)void this.refreshDrafts()});
   this.status=document.createElement('p');this.status.setAttribute('role','status');this.status.setAttribute('aria-live','polite');
   this.recoveryPanel=document.createElement('section');this.recoveryPanel.setAttribute('aria-label','Recovery drafts');this.recoveryPanel.hidden=true;
@@ -37,6 +38,7 @@ export class ParentControls {
   const state=this.options.editing?.controller.state(),key=JSON.stringify(state?{mode:state.mode,error:state.error,dirty:state.dirty}:null);
   const blocked=!state||['closed','conflict','uncertain','recovery_pending'].includes(state.mode)||state.error==='host_state_failed';
   for(const action of this.actions)action.disabled=this.busy||blocked;
+  this.copyCurrent.disabled=this.busy||!this.options.editing||state?.mode==='closed';
   if(key!==this.lastState){this.lastState=key;if(!this.busy)this.say(!state?'Editing unavailable. Recovery drafts remain available.':state.error?`${state.mode.replaceAll('_',' ')}: ${state.error.replaceAll('_',' ')}`:state.mode==='saved'?'Saved':state.mode==='saving'?'Saving':state.dirty?'Editing — unsaved changes':'Editing');}
  }
  private async save():Promise<void> {
@@ -62,6 +64,10 @@ export class ParentControls {
   let message:string;try{const receipt=await this.options.editing.exporter.export(kind,filename);message=`Created ${basename(receipt.destination)}`}
   catch(error){const inspect=error instanceof ExportError&&error.mayExist&&error.destination?` Inspect ${basename(error.destination)}; a file may have been created.`:'';message=`Export failed: ${errorText(error)}${inspect}`}
   finally{this.busy=false;this.refreshState()}this.say(message);
+ }
+ private async copyCurrentDraft():Promise<void>{
+  if(!this.current()||this.busy||!this.options.editing)return;this.busy=true;this.refreshState();this.say('Reading current draft');
+  let message:string;try{const snapshot=await this.options.editing.frame.readDraft();if(!this.current())return;await this.options.copyText(snapshot.source);message='Copied current draft; source file unchanged'}catch(error){message=`Copy failed: ${errorText(error)}`}finally{this.busy=false;this.refreshState()}this.say(message);
  }
  private async restoreDraft(selection:DraftSelection):Promise<void>{
   if(!this.current()||this.busy||!this.options.editing)return;this.busy=true;this.refreshState();this.say('Restoring selected draft');
