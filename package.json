@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:recovery": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && playwright test",
+    "test:recovery": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && node scripts/prepare-visual-assets.mjs && playwright test",
     "prepare:recovery-assets": "node scripts/prepare-recovery-assets.mjs",
     "test:source": "node scripts/prepare-contract-tests.mjs && node --test tests/node/*.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "24.0.0",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   },
   "dependencies": {

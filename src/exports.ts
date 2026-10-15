@@ -121,10 +121,14 @@ export class ExportCoordinator {
    operation.timedOut = true;
    reject(new ExportError('timeout', destination, operation.started));
   }, this.options.timeoutMs ?? 30000);
-  void this.run(kind, operation).then(resolve, reject).finally(() => {
+  const settled = () => {
    clearTimeout(timer);
    if (this.operation === operation) this.operation = null;
-  });
+  };
+  // Release the settled operation before notifying callers. A timed-out write
+  // retains ownership until run() actually settles, so it cannot be retried early.
+  void this.run(kind, operation).then(receipt => {settled(); resolve(receipt);},
+   error => {settled(); reject(error);});
   return result;
  }
  private async run(kind: ExportKind, operation: Operation): Promise<ExportReceipt> {
