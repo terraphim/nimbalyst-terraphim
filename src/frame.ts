@@ -1,11 +1,12 @@
 /** Reconstructed opaque transport. Visual editor shell and native CSP remain separate gates. */
 import {sourceBytes} from './source.ts';
+import {verifyVisualAssets,type VisualAssets,type VisualManifest} from './visual.ts';
 import type {ParentController,Envelope,Proposal} from './controller.ts';
 export const FRAME_ASSET_NAMES=['bootstrap','source','engineGlue','engineWasm','hostBridge'] as const;
 export type FrameAssetName=typeof FRAME_ASSET_NAMES[number];
 export type FrameAssets=Record<FrameAssetName,Uint8Array<ArrayBuffer>>;
 export type FrameManifest=Record<FrameAssetName,{sha256:string;bytes:number}>;
-export interface FrameOptions {container:HTMLElement;controller:ParentController;isCurrent:()=>boolean;signal?:AbortSignal;assets:FrameAssets;manifest:FrameManifest;startupTimeoutMs?:number;requestTimeoutMs?:number}
+export interface FrameOptions {container:HTMLElement;controller:ParentController;isCurrent:()=>boolean;signal?:AbortSignal;assets:FrameAssets;manifest:FrameManifest;visual?:{assets:VisualAssets;manifest:VisualManifest};startupTimeoutMs?:number;requestTimeoutMs?:number}
 const LIMIT=16*1024*1024;
 const digest=async(bytes:Uint8Array<ArrayBuffer>)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
 /** Bound serialized UTF-8 control data, including JSON overhead, before transport. */
@@ -30,6 +31,11 @@ function opaqueInstaller(nonce:string):void {
    const init=event.data;const names=['bootstrap','source','engineGlue','engineWasm','hostBridge'];
    if(Object.keys(init.assets).sort().join()!==[...names].sort().join()||Object.keys(init.manifest).sort().join()!==[...names].sort().join())throw Error('Invalid assets');let total=0;
    for(const name of names){const bytes=init.assets[name] as Uint8Array<ArrayBuffer>,expected=init.manifest[name];if(!(bytes instanceof Uint8Array)||!expected||bytes.length!==expected.bytes||!(/^[a-f0-9]{64}$/).test(expected.sha256)||(total+=bytes.length)>16*1024*1024)throw Error('Invalid asset');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');if(hash!==expected.sha256)throw Error('Asset integrity failure');}
+   if(init.visual){
+    const visualNames=['runtime','components','styles','wrapper','graphWorker','graphGlue','graphWasm','defaultRole'];
+    if(Object.keys(init.visual.assets).sort().join()!==[...visualNames].sort().join()||Object.keys(init.visual.manifest).sort().join()!==[...visualNames].sort().join())throw Error('Invalid visual assets');
+    for(const name of visualNames){const bytes=init.visual.assets[name] as Uint8Array<ArrayBuffer>,expected=init.visual.manifest[name];if(!(bytes instanceof Uint8Array)||!expected||Object.keys(expected).sort().join()!=='bytes,sha256'||!Number.isSafeInteger(expected.bytes)||expected.bytes<=0||bytes.length!==expected.bytes||!(/^[a-f0-9]{64}$/).test(expected.sha256)||(total+=bytes.length)>16*1024*1024)throw Error('Invalid visual asset');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');if(hash!==expected.sha256)throw Error('Visual asset integrity failure');}
+   }
    bootstrapUrl=URL.createObjectURL(new Blob([init.assets.bootstrap],{type:'text/javascript'}));
    const module=await import(bootstrapUrl);const client=await module.activate(init,port,nonce);
    Object.defineProperty(globalThis,'TerraphimFrameClient',{value:client,configurable:true});
@@ -49,8 +55,8 @@ export class FrameTransport {
   const current=()=>!options.signal?.aborted&&options.isCurrent()&&options.container.isConnected;
   if(!(options.container instanceof HTMLElement)||typeof options.isCurrent!=='function'||!current())throw Error('Frame owner unavailable');
   for(const ms of [options.startupTimeoutMs??10000,options.requestTimeoutMs??30000])if(!Number.isSafeInteger(ms)||ms<50||ms>60000)throw Error('Invalid frame deadline');
-  const manifest=manifestCopy(options.manifest);const assets=await verifyFrameAssets(options.assets,manifest,current);if(!current())throw Error('Frame owner changed');const snapshot=options.controller.snapshot();sourceBytes(snapshot.source);serializeFrameControl(snapshot);
-  const transport=new FrameTransport({...options,manifest});await transport.mount(assets,snapshot);return transport;
+  const manifest=manifestCopy(options.manifest);const [assets,visual]=await Promise.all([verifyFrameAssets(options.assets,manifest,current),options.visual?verifyVisualAssets(options.visual.assets,options.visual.manifest,current):Promise.resolve(undefined)]);if(Object.values(assets).reduce((n,value)=>n+value.byteLength,0)+Object.values(visual?.assets??{}).reduce((n,value)=>n+value.byteLength,0)>LIMIT)throw Error('Combined frame assets exceed limit');if(!current())throw Error('Frame owner changed');const snapshot=options.controller.snapshot();sourceBytes(snapshot.source);serializeFrameControl(snapshot);
+  const transport=new FrameTransport({...options,manifest,visual});await transport.mount(assets,snapshot);return transport;
  }
  private current():boolean {try{return !this.disposed&&!this.options.signal?.aborted&&this.options.isCurrent()&&this.options.container.isConnected;}catch{return false;}}
  private mount(assets:FrameAssets,snapshot:Envelope):Promise<void>{
@@ -76,10 +82,11 @@ export class FrameTransport {
      if(!this.started)return;
      void this.receive(data).catch(()=>this.dispose());
     };
-    this.port.start();this.element.contentWindow!.postMessage({type:'terraphim-init',nonce:this.epoch,assets,manifest:this.options.manifest,snapshot,requestTimeoutMs:this.options.requestTimeoutMs??30000},'*',[channel.port2]);
+    this.port.start();this.element.contentWindow!.postMessage({type:'terraphim-init',nonce:this.epoch,assets,manifest:this.options.manifest,visual:this.options.visual,snapshot,requestTimeoutMs:this.options.requestTimeoutMs??30000},'*',[channel.port2]);
    };
    addEventListener('message',this.readyListener);const nonce=this.epoch;const script=`(${opaqueInstaller.toString()})(${JSON.stringify(nonce)});`;
-   this.element.srcdoc=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' blob: 'wasm-unsafe-eval'; style-src 'none'; connect-src 'none'; worker-src 'none'; img-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"><script nonce="${nonce}">${script}</script>`;
+   const localResources=this.options.visual?"style-src 'unsafe-inline'; connect-src blob: data:; worker-src blob:; img-src blob: data:; font-src data:":"style-src 'none'; connect-src 'none'; worker-src 'none'; img-src 'none'; font-src 'none'";
+   this.element.srcdoc=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' blob: 'wasm-unsafe-eval'; ${localResources}; frame-src 'none'; base-uri 'none'; form-action 'none'"><script nonce="${nonce}">${script}</script>`;
    this.options.container.append(this.element);
   });
  }

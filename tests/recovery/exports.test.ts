@@ -201,3 +201,8 @@ for (const change of ['resource', 'current', 'capability'] as const) {
   } finally {await f.cleanup();}
  });
 }
+
+test('one caller can await clean then graph export without a stale busy operation',async({page})=>{
+ const f=await exportFixture(page);try{await page.evaluate(()=>(window as any).author());const receipts=await page.evaluate(async()=>{const e=(window as any).exporter;return[await e.export('clean','sequential.clean.md'),await e.export('knowledgeGraph','sequential.knowledge-graph.json')]});expect(receipts.map((r:any)=>r.kind)).toEqual(['clean','knowledgeGraph']);expect(await f.readDestination('sequential.clean.md')).toBe('Concern requires a Decision.\n');const graph=JSON.parse(await f.readDestination('sequential.knowledge-graph.json'));expect(graph.data.risk.id).toBe(graph.data.concern.id);expect(f.edits).toHaveLength(2);
+ }finally{await f.cleanup()}
+});
