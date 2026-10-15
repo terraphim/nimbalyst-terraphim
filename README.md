@@ -1,8 +1,8 @@
 # Terraphim for Nimbalyst — component development
 
-This repository contains the in-progress components for a Nimbalyst editor that reuses Terraphim's Rust/WASM engine. There is no installable Nimbalyst extension or package release yet.
+This repository contains the in-progress components for a Nimbalyst editor that reuses Terraphim's Rust/WASM engine. The development `.nimext` candidate can be built and inspected; native application qualification and a public package release remain pending.
 
-The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Parent controls provide Save, fresh-file export dialogs with cancellation/focus restoration, and recovery list/copy/explicit-discard even when editing is unavailable. Native host wiring, recovery restoration, role controls, optional AI alternatives and installed-app acceptance remain in progress.
+The components cover UTF-8 file admission, opted-in role storage, local recovery drafts, save/readback control, fresh clean/graph exports and an opaque frame using the released visual editor and graph Worker. Actual browser tests create alternatives, preserve undo/redo, save/reopen annotated Markdown and verify same-concept synonym exports. The parent Save barrier flushes queued frame edits before a verified save or export, including a second Save requested during an existing write. Parent controls provide Save, fresh-file export dialogs with cancellation/focus restoration, and recovery list/copy/explicit-discard even when editing is unavailable. The native React entry assembles these components. Recovery restoration, role controls, optional AI alternatives and installed-app acceptance remain in progress.
 
 ## Run the component tests
 
@@ -24,7 +24,7 @@ The asset importer checks SHA-256 `daa104aecdca43df5ca6dcf36b420351be09784a8436a
 
 The visual dependency builder verifies all released files before bundling local Shoelace modules and embedding the exact local font/icon bytes. Editor, graph Worker and Rust/WASM source stay unchanged; no CDN is used by the frame. The resulting source-component manifest is not a released native-package manifest.
 
-The read-only component workflow runs these checks on Linux, macOS and Windows and retains actual logs and saved outputs. It does not build or publish a native extension. Every supported native app must install the eventual package and produce saved outputs for all 41 acceptance requirements before a release. The native Open action also depends on a [supported upstream capability](https://github.com/nimbalyst/nimbalyst/issues/1764), absent from released SDK 0.7.0. Track the remaining work in [NIM-10](https://github.com/terraphim/terraphim-editor/issues/6).
+The read-only component workflow runs these checks on Linux, macOS and Windows and retains actual logs and saved outputs. It builds and retains a development candidate package without publishing a release. Every supported native app must install the eventual package and produce saved outputs for all 41 acceptance requirements before a release. The native Open action also depends on a [supported upstream capability](https://github.com/nimbalyst/nimbalyst/issues/1764), absent from released SDK 0.7.0. Track the remaining work in [NIM-10](https://github.com/terraphim/terraphim-editor/issues/6).
 
 ## Source and dependencies
 
@@ -36,3 +36,20 @@ The read-only component workflow runs these checks on Linux, macOS and Windows a
 - The npm lockfile pins `@nimbalyst/extension-sdk` 0.7.0, TypeScript 5.9.3, Playwright 1.62.1 and esbuild 0.28.2. The SDK is MIT licensed.
 
 Terraphim code is available under the [MIT license](LICENSE). Third-party notices remain next to the vendored code.
+
+## Development candidate package
+
+The React entry uses Nimbalyst SDK 0.7.0 and its Vite configuration. It embeds the verified Editor RC2 runtime, Rust/WASM engine and graph worker locally; React is supplied by the host. Only workspace filesystem access is requested. Source, diff and collaborative editing modes remain disabled.
+
+After installing locked dependencies and preparing the verified Editor RC2 assets as described above, run:
+
+```sh
+npm run test:source
+npm run test:recovery
+npm run test:native-package
+npm run package:candidate -- --output .artifacts/native-package/terraphim-editor-0.1.0-dev.1.nimext
+```
+
+CI runs these checks on Linux, macOS and Windows and retains a development `.nimext` archive with its file hashes, SDK validation and actual browser output records. Existing archive destinations are refused. The package includes unchanged dependency licences and uses no remote runtime assets.
+
+The compiled-entry browser check creates an alternative, saves and reopens the actual annotated file, then reads the clean Markdown and same-concept synonym graph from disk. This remains component evidence: native Nimbalyst installation, clipboard behavior, recovery restoration, role controls, supported Open, all 41 requirements on three operating systems and release/catalog admission are not yet qualified. No release or marketplace publishing job runs from this component workflow.

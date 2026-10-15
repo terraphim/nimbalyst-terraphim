@@ -5,15 +5,22 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:recovery": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && node scripts/prepare-visual-assets.mjs && playwright test",
+    "test:recovery": "npm run build:native && node scripts/prepare-native-test.mjs && playwright test",
     "prepare:recovery-assets": "node scripts/prepare-recovery-assets.mjs",
-    "test:source": "node scripts/prepare-contract-tests.mjs && node --test tests/node/*.test.mjs"
+    "test:source": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && node scripts/prepare-visual-assets.mjs && node --test tests/node/*.test.mjs",
+    "build:native": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && node scripts/prepare-visual-assets.mjs && node scripts/embed-native-assets.mjs && tsc --project tsconfig.native.json --noEmit && vite build && node scripts/prepare-native-notices.mjs && node scripts/validate-native.mjs",
+    "test:native-package": "python3 -W error -m unittest discover -s tests/package -v",
+    "package:candidate": "python3 scripts/package-native.py"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "24.0.0",
+    "@types/react": "19.2.17",
     "esbuild": "0.28.2",
-    "typescript": "5.9.3"
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
   },
   "dependencies": {
     "@nimbalyst/extension-sdk": "0.7.0"

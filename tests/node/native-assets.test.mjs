@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,cp,readFile,writeFile,rm,symlink} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {embedNativeAssets} from '../../scripts/embed-native-assets.mjs';
+async function fixture(fn){const root=await mkdtemp(join(tmpdir(),'native-assets-'));try{await cp('.cache/contracts',join(root,'.cache/contracts'),{recursive:true});await fn(root)}finally{await rm(root,{recursive:true,force:true})}}
+test('embeds the actual verified thirteen source assets deterministically',async()=>fixture(async root=>{const a=await embedNativeAssets(root),b=await embedNativeAssets(root);assert.equal(a.source,b.source);assert.equal(a.readbacks.length,13);const source=JSON.parse(a.source.slice(a.source.indexOf('=')+1).replace(/ as const;\n$/,''));for(const row of a.readbacks){const manifest=JSON.parse(await readFile(join(root,'.cache/contracts',row.group,'manifest.json')));const input=await readFile(join(root,'.cache/contracts',row.group,manifest[row.name].url.split('/').at(-1)));assert.deepEqual(Buffer.from(source[row.group].assets[row.name],'base64'),input)}}));
+test('refuses a modified actual Rust asset',async()=>fixture(async root=>{await writeFile(join(root,'.cache/contracts/frame/engineWasm.wasm'),'altered');await assert.rejects(embedNativeAssets(root),/integrity/)}));
+for(const [name,change]of Object.entries({extra:m=>{m.unreviewed=m.source},path:m=>{m.source.url='/contracts/frame/../source.js'},alias:m=>{m.source.extra=true},size:m=>{m.source.bytes=-1}}))test('refuses '+name+' in the actual asset manifest',async()=>fixture(async root=>{const path=join(root,'.cache/contracts/frame/manifest.json'),m=JSON.parse(await readFile(path));change(m);await writeFile(path,JSON.stringify(m));await assert.rejects(embedNativeAssets(root))}));
+test('refuses linked assets rather than embedding their targets',async()=>fixture(async root=>{const path=join(root,'.cache/contracts/frame/source.js'),bytes=await readFile(path),target=join(root,'target.js');await writeFile(target,bytes);await rm(path);await symlink(target,path,process.platform==='win32'?'file':undefined);await assert.rejects(embedNativeAssets(root),/regular file/)}));

@@ -1,0 +1,21 @@
+{
+  "id": "terraphim-editor",
+  "name": "Terraphim Editor (development candidate)",
+  "version": "0.1.0-dev.1",
+  "description": "Knowledge-graph alternatives in workspace .terraphim.md files. Development candidate awaiting native qualification.",
+  "main": "dist/index.js",
+  "styles": "dist/index.css",
+  "apiVersion": "1.0.0",
+  "permissions": {"filesystem": true},
+  "contributions": {
+    "customEditors": [{
+      "filePatterns": ["*.terraphim.md"],
+      "displayName": "Terraphim Editor",
+      "component": "TerraphimEditor",
+      "supportsSourceMode": false,
+      "supportsDiffMode": false,
+      "supportsTranscriptEmbed": false,
+      "collaboration": {"supported": false}
+    }]
+  }
+}
