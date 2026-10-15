@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/prepare-opaque-installer.mjs && tsc --noEmit",
     "test:recovery": "npm run build:native && node scripts/prepare-native-test.mjs && playwright test",
     "prepare:recovery-assets": "node scripts/prepare-recovery-assets.mjs",
     "test:source": "node scripts/prepare-contract-tests.mjs && node scripts/prepare-frame-contracts.mjs && node scripts/prepare-visual-assets.mjs && node --test tests/node/*.test.mjs",
