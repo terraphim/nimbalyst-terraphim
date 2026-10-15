@@ -1,7 +1,7 @@
 /** Newly reconstructed parent authority. Uses the released Rust host session, never a replacement parser/history. */
 import type { EditorHost } from '@nimbalyst/extension-sdk/types/editor';
 import { readSource, sourceBytes, sourceIdentity, type SourceHost, type SourceReadOptions, type SourceSnapshot } from './source.ts';
-import { DraftRecovery, RecoveryError, type DraftRecord } from './recovery.ts';
+import { DraftRecovery, RecoveryError, type DraftRecord, type DraftSelection } from './recovery.ts';
 export interface RustSession {
  snapshot():string; propose(message:string):string; acknowledge(id:number,revision:number,source:string):string;
  reject(id:number):void; synchronize(revision:number,source:string):string; free():void;
@@ -9,7 +9,7 @@ export interface RustSession {
 export interface Envelope {protocol:1;resource:string;session:string;revision:number;sourceHash:string;source:string;projection:unknown}
 export interface Proposal extends Envelope {id:number;beforeHash:string}
 export type ControllerMode='editing'|'saving'|'saved'|'recovery_pending'|'conflict'|'save_failed'|'uncertain'|'closed';
-export type ControllerErrorCode='closed'|'stale'|'unsupported'|'busy'|'invalid_proposal'|'recovery_pending'|'conflict'|'save_failed'|'timeout'|'uncertain'|'revision_exhausted'|'host_state_failed';
+export type ControllerErrorCode='closed'|'stale'|'unsupported'|'busy'|'invalid_proposal'|'recovery_pending'|'conflict'|'save_failed'|'timeout'|'uncertain'|'revision_exhausted'|'host_state_failed'|'dirty';
 export class ControllerError extends Error {constructor(readonly code:ControllerErrorCode){super(`Controller ${code}`);this.name='ControllerError';}}
 export interface SaveReceipt {resource:string;session:string;revision:number;source:string;sourceHash:string;verification:'active-resource-raw-utf8'}
 export type ControllerHost=SourceHost&Pick<EditorHost,'setDirty'|'onSaveRequested'>;
@@ -25,6 +25,7 @@ export class ParentController {
  private readonly host:ControllerHost;private readonly options:ControllerOptions;private readonly rust:RustSession;
  private readonly identity:SourceSnapshot['identity'];private accepted:Envelope;private persisted:SourceSnapshot;
  private pendingSource:string|null=null;private draft:DraftRecord|null=null;
+ private restoring:Promise<Envelope>|null=null;
  private accepting:Promise<Envelope>|null=null;private saving:Promise<void>|null=null;private publicSave:Promise<SaveReceipt>|null=null;
  private saveQueued=false;private timedOut=false;private capturedSave:Envelope|null=null;private observing:Promise<void>|null=null;private observationGeneration=0;private observeQueued=false;
  private unsubscribers:Array<()=>void>=[];
@@ -54,7 +55,7 @@ export class ParentController {
   if(id.workspace!==this.identity.workspace||id.resource!==this.identity.resource)throw new ControllerError('stale');
  }
  private readable():SourceReadOptions {const epoch=this.epoch;return{supports:this.options.supports,isCurrent:()=>!this.closed&&this.options.isCurrent()&&epoch===this.epoch&&this.host.filePath===this.identity.resource&&this.host.workspaceId===this.identity.workspace};}
- private editable():void {this.guard();if(this.conflicted())throw new ControllerError('conflict');if(this.mode==='recovery_pending'||this.mode==='uncertain')throw new ControllerError(this.mode);if(this.error==='host_state_failed')throw new ControllerError(this.error);}
+ private editable():void {this.guard();if(this.restoring)throw new ControllerError('busy');if(this.conflicted())throw new ControllerError('conflict');if(this.mode==='recovery_pending'||this.mode==='uncertain')throw new ControllerError(this.mode);if(this.error==='host_state_failed')throw new ControllerError(this.error);}
  private recoveryPending():boolean {return this.mode==='recovery_pending';}
  private conflicted():boolean {return this.mode==='conflict';}
  private nextRevision():number {if(this.accepted.revision>=0xffffffff)throw new ControllerError('revision_exhausted');return this.accepted.revision+1;}
@@ -90,6 +91,43 @@ export class ParentController {
    else if(!stored&&this.mode!=='recovery_pending')this.pendingSource=null;
    if(!this.closed)this.notify();throw error;
   }
+ }
+ /** Restore a selected existing draft into a dirty buffer; never writes the source file. */
+ restoreDraft(selection:DraftSelection,expected:Pick<Envelope,'revision'|'sourceHash'>,choice:{confirmed:boolean}):Promise<Envelope>{
+  let before:Envelope;
+  try{this.editable();if(choice?.confirmed!==true)throw new ControllerError('unsupported');if(this.accepting||this.saving||this.observing)throw new ControllerError('busy');if(this.dirty())throw new ControllerError('dirty');before=this.snapshot();if(expected?.revision!==before.revision||expected.sourceHash!==before.sourceHash)throw new ControllerError('stale');}catch(error){return Promise.reject(error)}
+  const epoch=this.epoch,baseline=this.persisted.sha256;
+  const check=()=>{this.guard(epoch);if(this.accepted.revision!==before.revision||this.accepted.sourceHash!==before.sourceHash||this.persisted.sha256!==baseline||this.conflicted()||this.mode==='uncertain'||this.error==='host_state_failed')throw new ControllerError('stale')};
+  const task=Promise.resolve().then(async()=>{
+   let pending=false,writtenDraft:DraftRecord|null=null;
+   try{
+    const disk=await readSource(this.host,this.readable());check();if(disk.sha256!==baseline||disk.source!==this.persisted.source)throw new ControllerError('conflict');
+    const recovered=await this.options.recovery.recover(selection,disk.sha256);check();
+    if(recovered.record.identity.workspace!==this.identity.workspace||recovered.record.identity.resource!==this.identity.resource)throw new ControllerError('unsupported');
+    if(recovered.status==='conflict')throw new ControllerError('conflict');
+    sourceBytes(recovered.source);const revision=this.nextRevision();
+    // Validate using a separate actual Rust session before persisting or changing authority.
+    const validator=this.options.createSession(before.resource,before.session,before.revision,recovered.source);
+    try{const validated:Envelope=JSON.parse(validator.snapshot());if(validated.source!==recovered.source||validated.sourceHash!==recovered.record.sha256)throw new ControllerError('invalid_proposal')}finally{validator.free()}
+    check();this.pendingSource=recovered.source;pending=true;this.notify();check();
+    const draft=await this.options.recovery.put({identity:{...this.identity,session:before.session},revision,source:recovered.source,baselineHash:baseline});writtenDraft=draft;check();
+    const after=await readSource(this.host,this.readable());check();if(after.sha256!==baseline||after.source!==disk.source)throw new ControllerError('conflict');
+    const finalSelection=await this.options.recovery.recover(selection,after.sha256);check();if(finalSelection.status!=='recoverable'||finalSelection.source!==recovered.source||finalSelection.record.sha256!==recovered.record.sha256)throw new ControllerError('stale');
+    this.accepted=JSON.parse(this.rust.synchronize(revision,recovered.source));this.draft=draft;this.pendingSource=null;pending=false;this.mode='editing';this.error=null;
+    try{this.notify()}catch{/* Committed dirty source remains inspectable; host failure blocks writes. */}
+    return structuredClone(this.accepted);
+   }catch(error){
+    if(!this.closed){
+     let cleanupFailed=false;
+     if(writtenDraft&&pending&&this.ownsHost()&&this.accepted.revision===before.revision){try{const removed=await this.options.recovery.removeIf(writtenDraft,()=>this.ownsHost()&&this.accepted.revision===before.revision);if(!removed)cleanupFailed=true}catch{cleanupFailed=true}}
+     if(cleanupFailed){this.pendingSource=null;this.mode='recovery_pending';this.error='recovery_pending'}
+     else if(error instanceof RecoveryError&&pending&&!writtenDraft&&['capacity','unavailable','closed'].includes(error.code)){this.mode='recovery_pending';this.error='recovery_pending'}
+     else if(pending)this.pendingSource=null;
+     try{this.notify()}catch{}
+    }
+    throw error;
+   }
+  });this.restoring=task;void task.finally(()=>{if(this.restoring===task)this.restoring=null}).catch(()=>{});return task;
  }
  /** Explicit save requests share one bounded queue. Timeout retains the actual in-flight operation. */
  save():Promise<SaveReceipt>{
@@ -162,8 +200,8 @@ export class ParentController {
  }
  /** Explicit reload starts a new history boundary; an unsettled writer cannot be cancelled by reload. */
  async reload():Promise<Envelope>{
-  this.guard();if(this.saving||this.accepting||this.observing)throw new ControllerError('busy');const epoch=this.epoch;
-  const actual=await readSource(this.host,this.readable());this.guard(epoch);if(this.saving||this.accepting)throw new ControllerError('busy');
+  this.guard();if(this.saving||this.accepting||this.observing||this.restoring)throw new ControllerError('busy');const epoch=this.epoch;
+  const actual=await readSource(this.host,this.readable());this.guard(epoch);if(this.saving||this.accepting||this.restoring)throw new ControllerError('busy');
   this.accepted=JSON.parse(this.rust.synchronize(this.nextRevision(),actual.source));this.persisted=actual;this.pendingSource=null;this.mode='editing';this.error=null;this.notify();return structuredClone(this.accepted);
  }
  open():never {throw new ControllerError('unsupported');}
