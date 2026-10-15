@@ -16,7 +16,8 @@ export type ControllerHost=SourceHost&Pick<EditorHost,'setDirty'|'onSaveRequeste
 export interface ControllerOptions {
  host:ControllerHost;isCurrent:()=>boolean;supports:SourceReadOptions['supports'];recovery:DraftRecovery;
  createSession:(resource:string,session:string,revision:number,source:string)=>RustSession;
- timeoutMs?:number;
+ /** Native host Save must flush the owned frame before calling this controller. */
+ requestSave?:()=>Promise<SaveReceipt>;timeoutMs?:number;
 }
 /** Acknowledged edits are durable in parent IndexedDB; Saved requires exact host/raw-file readback. */
 export class ParentController {
@@ -33,7 +34,7 @@ export class ParentController {
   if(this.accepted.source!==source.source||this.accepted.sourceHash!==source.sha256){this.rust.free();throw new ControllerError('invalid_proposal');}
  }
  static async admit(options:ControllerOptions):Promise<ParentController>{
-  if(typeof options.host.setDirty!=='function'||typeof options.host.onSaveRequested!=='function'||!Number.isFinite(options.timeoutMs??30000)||(options.timeoutMs??30000)<=0)throw new ControllerError('unsupported');
+  if(typeof options.host.setDirty!=='function'||typeof options.host.onSaveRequested!=='function'||!Number.isFinite(options.timeoutMs??30000)||(options.timeoutMs??30000)<=0||(options.requestSave!==undefined&&typeof options.requestSave!=='function'))throw new ControllerError('unsupported');
   const initialIdentity=sourceIdentity(options.host,{supports:options.supports,isCurrent:options.isCurrent});
   const current=()=>options.isCurrent()&&options.host.filePath===initialIdentity.resource&&options.host.workspaceId===initialIdentity.workspace;
   const source=await readSource(options.host,{supports:options.supports,isCurrent:current});
@@ -43,7 +44,7 @@ export class ParentController {
   const controller=new ParentController(options,after);
   try{
    controller.unsubscribers.push(options.host.onFileChanged(()=>{void controller.observeDisk().catch(()=>{});}));
-   controller.unsubscribers.push(options.host.onSaveRequested(()=>controller.save().then(()=>{},()=>{})));
+   controller.unsubscribers.push(options.host.onSaveRequested(()=>Promise.resolve().then(()=>options.requestSave?options.requestSave():controller.save()).then(()=>{},()=>{})));
    controller.notify();return controller;
   }catch(error){controller.dispose();throw error;}
  }
