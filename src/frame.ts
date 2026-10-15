@@ -47,6 +47,8 @@ function opaqueInstaller(nonce:string):void {
 }
 interface HostSave {token:string;promise:Promise<SaveReceipt>;resolve:(receipt:SaveReceipt)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;generation:number;scheduled:boolean;refused:Error|null}
 interface HostRestore {token:string;selection:DraftSelection;promise:Promise<Envelope>;resolve:(receipt:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;receipt:Envelope|null}
+interface RoleRequest {requestId:string;operation:'export'|'import';before:Envelope;promise:Promise<string>;resolve:(value:string)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean}
+function boundedRoleSnapshot(value:unknown):asserts value is string {if(typeof value!=='string'||new TextEncoder().encode(value).byteLength>4*1024*1024||new TextDecoder().decode(new TextEncoder().encode(value))!==value)throw Error('Invalid role snapshot size or encoding')}
 interface HostReload {token:string;promise:Promise<Envelope>;resolve:(value:Envelope)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>;timedOut:boolean;inFlight:boolean;receipt:Envelope|null;failure:Error|null}
 /** Captured text for explicit copying; acceptedRevision does not make it a saved/ACKed source. */
 export interface CurrentDraft {resource:string;session:string;acceptedRevision:number;source:string;sourceHash:string}
@@ -55,7 +57,7 @@ interface DraftRead {requestId:string;resource:string;session:string;promise:Pro
 export class FrameTransport {
  readonly element:HTMLIFrameElement;readonly epoch=crypto.randomUUID();
  private port:MessagePort|null=null;private disposed=false;private initialized=false;private started=false;private busy=false;private lastId=0;
- private hostReload:HostReload|null=null;private hostSave:HostSave|null=null;private hostRestore:HostRestore|null=null;private draftRead:DraftRead|null=null;
+ private roleRequest:RoleRequest|null=null;private hostReload:HostReload|null=null;private hostSave:HostSave|null=null;private hostRestore:HostRestore|null=null;private draftRead:DraftRead|null=null;
  private options:FrameOptions;private readyListener:((event:MessageEvent)=>void)|null=null;private startupTimer:ReturnType<typeof setTimeout>|null=null;private ownerTimer:ReturnType<typeof setInterval>|null=null;
  private rejectStart:((error:Error)=>void)|null=null;private abortListener:()=>void;
  private constructor(options:FrameOptions){this.options=options;this.element=document.createElement('iframe');this.element.title='Terraphim editor';this.element.setAttribute('sandbox','allow-scripts');this.abortListener=()=>this.dispose();}
@@ -101,6 +103,7 @@ export class FrameTransport {
  private reply(message:Record<string,unknown>):void {if(!this.current()){this.dispose();return;}try{this.port?.postMessage(serializeFrameControl({...message,frameEpoch:this.epoch}));}catch{this.port?.postMessage(serializeFrameControl({type:'transport-error',frameEpoch:this.epoch,id:null,reason:'Authoritative reply exceeds transport limit'}));}}
  /** Capture the frame's latest source through its existing bridge before the parent Save. */
  requestSave():Promise<SaveReceipt>{
+  if(this.roleRequest)return Promise.reject(Error('Role operation is in progress'));
   if(this.hostReload)return Promise.reject(Error('Explicit reload is in progress'));
   if(this.hostRestore)return Promise.reject(Error('Recovery restoration is in progress'));
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
@@ -147,11 +150,24 @@ export class FrameTransport {
   this.draftRead=pending;this.reply({type:'host-read-draft',protocol:1,requestId:pending.requestId,resource:pending.resource,session:pending.session});return promise;
  }
  private finishDraftRead(pending:DraftRead,value?:CurrentDraft,error?:Error):void {if(this.draftRead!==pending)return;clearTimeout(pending.timer);this.draftRead=null;if(error)pending.reject(error);else if(value)pending.resolve(value);}
+ /** Export the active role only; document alternatives never become shared-role input. */
+ exportRoleSnapshot():Promise<string>{return this.requestRole('export')}
+ /** The released coordinator validates and activates snapshots transactionally. */
+ importRoleSnapshot(snapshot:string):Promise<string>{try{boundedRoleSnapshot(snapshot)}catch(error){return Promise.reject(error)}return this.requestRole('import',snapshot)}
+ private requestRole(operation:'export'|'import',snapshot?:string):Promise<string>{
+  if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
+  if(this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
+  let before:Envelope;try{before=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
+  let resolve!:(value:string)=>void,reject!:(error:Error)=>void;const promise=new Promise<string>((yes,no)=>{resolve=yes;reject=no});
+  const pending:RoleRequest={requestId:crypto.randomUUID(),operation,before,promise,resolve,reject,timedOut:false,timer:setTimeout(()=>{if(this.roleRequest!==pending)return;pending.timedOut=true;reject(Error('Role operation timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Role operation timed out; its outcome is not cancellation'})},this.options.requestTimeoutMs??30000)};
+  this.roleRequest=pending;this.reply({type:'host-role',protocol:1,requestId:pending.requestId,operation,resource:before.resource,session:before.session,revision:before.revision,sourceHash:before.sourceHash,...(operation==='import'?{snapshot}:{})});return promise;
+ }
+ private finishRole(pending:RoleRequest,value?:string,error?:Error):void {if(this.roleRequest!==pending)return;clearTimeout(pending.timer);this.roleRequest=null;if(error)pending.reject(error);else if(value!==undefined&&!pending.timedOut)pending.resolve(value);}
  /** Explicitly replace the frozen buffer with actual disk bytes; never writes the file. */
  reload(choice:{confirmed:boolean}):Promise<Envelope>{
   if(choice?.confirmed!==true)return Promise.reject(Error('Reload needs explicit confirmation'));
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
-  if(this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
+  if(this.roleRequest||this.hostReload||this.hostSave||this.hostRestore||this.busy)return Promise.reject(Error('Another frame operation is in progress'));
   let snapshot:Envelope;try{snapshot=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
   let resolve!:(value:Envelope)=>void,reject!:(error:Error)=>void;const promise=new Promise<Envelope>((yes,no)=>{resolve=yes;reject=no});
   const pending:HostReload={token:crypto.randomUUID(),promise,resolve,reject,timedOut:false,inFlight:false,receipt:null,failure:null,timer:setTimeout(()=>{if(this.hostReload!==pending)return;pending.timedOut=true;reject(Error('Reload timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Reload timed out; its outcome is not cancellation'})},this.options.requestTimeoutMs??30000)};
@@ -162,7 +178,7 @@ export class FrameTransport {
  restoreDraft(selection:DraftSelection,choice:{confirmed:boolean}):Promise<Envelope>{
   if(choice?.confirmed!==true)return Promise.reject(Error('Recovery restoration needs explicit confirmation'));
   if(!this.current()||!this.started)return Promise.reject(Error('Frame unavailable'));
-  if(this.hostRestore||this.hostSave||this.hostReload)return Promise.reject(Error('Recovery restoration, reload or Save is already in progress'));
+  if(this.roleRequest||this.hostRestore||this.hostSave||this.hostReload)return Promise.reject(Error('Recovery restoration, reload or Save is already in progress'));
   let snapshot:Envelope;try{snapshot=this.options.controller.snapshot()}catch(error){return Promise.reject(error)}
   let resolve!:(receipt:Envelope)=>void,reject!:(error:Error)=>void;const promise=new Promise<Envelope>((yes,no)=>{resolve=yes;reject=no});
   const pending:HostRestore={token:crypto.randomUUID(),selection,promise,resolve,reject,timedOut:false,receipt:null,timer:setTimeout(()=>{if(this.hostRestore!==pending)return;pending.timedOut=true;pending.reject(Error('Recovery restoration timed out; its outcome is not cancellation'));this.reply({type:'transport-error',id:null,reason:'Recovery restoration timed out'})},this.options.requestTimeoutMs??30000)};
@@ -174,6 +190,15 @@ export class FrameTransport {
  }
  private async receive(message:Record<string,unknown>):Promise<void>{
   if(!this.current()){this.dispose();return;}
+  if(message.type==='role-result'||message.type==='role-refused'){
+   const pending=this.roleRequest;if(!pending||message.protocol!==1||message.requestId!==pending.requestId||message.resource!==pending.before.resource||message.session!==pending.before.session||message.operation!==pending.operation)return;
+   try{
+    if(message.type==='role-refused'){if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,reason,requestId,resource,session,type'||typeof message.reason!=='string'||message.reason.length>256)throw Error('Invalid role refusal');this.finishRole(pending,undefined,Error(message.reason));return;}
+    if(Object.keys(message).sort().join()!=='frameEpoch,operation,protocol,requestId,resource,revision,session,snapshot,sourceHash,type')throw Error('Invalid role result');
+    const current=this.options.controller.snapshot();if(message.revision!==pending.before.revision||message.sourceHash!==pending.before.sourceHash||current.revision!==message.revision||current.sourceHash!==message.sourceHash)throw Error('Role result belongs to a changed document');boundedRoleSnapshot(message.snapshot);
+    this.finishRole(pending,message.snapshot);if(pending.timedOut)this.reply({type:'transport-error',id:null,reason:'Role operation completed after its deadline'});
+   }catch(error){this.reply({type:'transport-error',id:null,reason:'Invalid role result'});this.finishRole(pending,undefined,error instanceof Error?error:Error('Invalid role result'))}return;
+  }
   if(['host-reload-ready','host-reload-refused','host-reload-applied'].includes(String(message.type))){
    const pending=this.hostReload;if(!pending)return;const before=this.options.controller.snapshot();if(message.protocol!==1||message.resource!==before.resource||message.session!==before.session||message.token!==pending.token)return;
    const keys=Object.keys(message).sort().join();
@@ -239,7 +264,7 @@ export class FrameTransport {
  /** Explicit owner synchronization; blocking states never replace an unsaved frame draft. */
  synchronize():void {if(this.hostReload)return;if(!this.current()){this.dispose();throw Error('Frame disposed');}const state=this.options.controller.state();if(['conflict','uncertain','recovery_pending'].includes(state.mode)||state.error==='host_state_failed'){this.reply({type:'transport-error',reason:state.error==='host_state_failed'?state.error:state.mode,id:null});return;}this.reply({...this.options.controller.snapshot(),type:'sync'});}
  dispose():void {
-  if(this.disposed)return;this.disposed=true;if(this.hostReload)this.finishReload(this.hostReload,Error('Frame disposed'));if(this.draftRead)this.finishDraftRead(this.draftRead,undefined,Error('Frame disposed'));if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
+  if(this.disposed)return;this.disposed=true;if(this.roleRequest)this.finishRole(this.roleRequest,undefined,Error('Frame disposed'));if(this.hostReload)this.finishReload(this.hostReload,Error('Frame disposed'));if(this.draftRead)this.finishDraftRead(this.draftRead,undefined,Error('Frame disposed'));if(this.hostRestore)this.finishRestore(this.hostRestore,Error('Frame disposed'));if(this.hostSave)this.finishHostSave(this.hostSave,undefined,Error('Frame disposed'));if(this.startupTimer)clearTimeout(this.startupTimer);this.startupTimer=null;if(this.ownerTimer)clearInterval(this.ownerTimer);this.ownerTimer=null;
   this.options.signal?.removeEventListener('abort',this.abortListener);if(this.readyListener)removeEventListener('message',this.readyListener);this.readyListener=null;
   try{this.port?.postMessage(serializeFrameControl({type:'dispose',frameEpoch:this.epoch}));}catch{}this.port?.close();this.port=null;this.element.remove();this.options.controller.dispose();this.rejectStart?.(Error('Frame disposed'));this.rejectStart=null;
  }
