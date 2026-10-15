@@ -25,7 +25,7 @@ export class ParentControls {
   button('Recovery drafts',()=>{this.recoveryPanel.hidden=!this.recoveryPanel.hidden;if(!this.recoveryPanel.hidden)void this.refreshDrafts()});
   this.status=document.createElement('p');this.status.setAttribute('role','status');this.status.setAttribute('aria-live','polite');
   this.recoveryPanel=document.createElement('section');this.recoveryPanel.setAttribute('aria-label','Recovery drafts');this.recoveryPanel.hidden=true;
-  const title=document.createElement('h2');title.textContent='Recovery drafts';const info=document.createElement('p');info.textContent='Drafts are separate from your saved file. Copy or discard a selected draft; opening this list does not change your document.';
+  const title=document.createElement('h2');title.textContent='Recovery drafts';const info=document.createElement('p');info.textContent='Drafts are separate from your saved file. Restore, copy or discard a selected draft; opening this list does not change your document. A restore creates an unsaved buffer and never writes the file automatically.';
   const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh drafts';refresh.addEventListener('click',()=>void this.refreshDrafts());this.draftRows=document.createElement('div');
   this.recoveryPanel.append(title,info,refresh,this.draftRows);this.element.append(toolbar,this.status,this.recoveryPanel);options.container.append(this.element);
   this.timer=setInterval(()=>this.refreshState(),100);this.refreshState();
@@ -63,6 +63,10 @@ export class ParentControls {
   catch(error){const inspect=error instanceof ExportError&&error.mayExist&&error.destination?` Inspect ${basename(error.destination)}; a file may have been created.`:'';message=`Export failed: ${errorText(error)}${inspect}`}
   finally{this.busy=false;this.refreshState()}this.say(message);
  }
+ private async restoreDraft(selection:DraftSelection):Promise<void>{
+  if(!this.current()||this.busy||!this.options.editing)return;this.busy=true;this.refreshState();this.say('Restoring selected draft');
+  let message:string;try{await this.options.editing.frame.restoreDraft(selection,{confirmed:true});message='Restored draft — unsaved changes'}catch(error){message=`Restore failed: ${errorText(error)}. The saved file and previous draft are preserved.`}finally{this.busy=false;this.refreshState()}this.say(message);
+ }
  private async refreshDrafts():Promise<void> {
   const generation=++this.listing;if(!this.current())return;this.draftRows.textContent='Loading drafts';
   try{const selections=await this.options.recovery.list(this.options.scope);if(!this.current()||generation!==this.listing)return;this.draftRows.replaceChildren();if(!selections.length){this.draftRows.textContent='No recovery drafts';return;}for(const selection of selections)this.addDraft(selection)}
@@ -74,6 +78,10 @@ export class ParentControls {
   const copy=document.createElement('button');copy.type='button';copy.textContent=selection.status==='candidate'?'Copy draft':'Copy inspection summary';
   copy.addEventListener('click',()=>{if(!this.current())return;void(async()=>{copy.disabled=true;try{const text=selection.record?(await this.options.recovery.recover(selection,selection.record.baselineHash)).source:selection.raw;if(!this.current())return;await this.options.copyText(text);this.say('Copied recovery draft')}catch(error){this.say(`Copy failed: ${errorText(error)}`)}finally{if(this.current())copy.disabled=false}})()});
   const discard=document.createElement('button');discard.type='button';discard.textContent='Discard draft';discard.addEventListener('click',()=>{if(!this.current())return;discard.disabled=true;const confirm=document.createElement('button');confirm.type='button';confirm.textContent='Confirm discard';const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Keep draft';const remove=()=>{confirm.remove();cancel.remove();discard.disabled=false;discard.focus()};cancel.addEventListener('click',remove);confirm.addEventListener('click',()=>{if(!this.current())return;void(async()=>{confirm.disabled=true;try{const removed=await this.options.recovery.discard(selection);if(!this.current())return;if(removed){row.remove();this.say('Draft discarded')}else{this.say('Draft changed; refresh before discarding');remove()}}catch(error){this.say(`Discard failed: ${errorText(error)}`);remove()}})()});row.append(confirm,cancel);cancel.focus()});
+  if(selection.status==='candidate'&&this.options.editing){
+   const restore=document.createElement('button');restore.type='button';restore.textContent='Restore draft';
+   restore.addEventListener('click',()=>{if(!this.current()||this.busy)return;restore.disabled=true;const note=document.createElement('p');note.textContent='Restore this selected draft as an unsaved buffer? Save or copy any current edits first. The file changes only when you Save.';const confirm=document.createElement('button');confirm.type='button';confirm.textContent='Confirm restore';const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Keep current buffer';const close=()=>{note.remove();confirm.remove();cancel.remove();restore.disabled=false;if(this.current())restore.focus()};cancel.addEventListener('click',close);confirm.addEventListener('click',()=>{if(!this.current()||this.busy)return;close();void this.restoreDraft(selection)});row.append(note,confirm,cancel);cancel.focus()});row.append(restore);
+  }
   row.append(title,notice,copy,discard);this.draftRows.append(row);
  }
  dispose():void {if(this.closed)return;this.closed=true;this.listing++;clearInterval(this.timer);if(this.dialog){this.dialog.close();this.dialog.remove();this.dialog=null;}this.element.remove()}
