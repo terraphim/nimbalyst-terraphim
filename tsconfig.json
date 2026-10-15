@@ -23,6 +23,7 @@
     "src/recovery.ts",
     "src/controller.ts",
     "src/frame.ts",
-    "src/frame-bootstrap.ts"
+    "src/frame-bootstrap.ts",
+    "src/exports.ts"
   ]
 }
