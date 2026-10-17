@@ -2,7 +2,7 @@ import React, {useRef, useState} from 'react';
 import {useEditorLifecycle} from '@nimbalyst/extension-sdk';
 import type {EditorHostProps, EditorWorkspaceFileOpenResult} from '@nimbalyst/extension-sdk';
 
-/** Private native verification fixture; it never calls Electron or a private host API. */
+/** Development-host verification fixture; it never calls Electron or a private host API. */
 export function WorkspaceOpenProbe({host}: EditorHostProps) {
   const text = useRef('');
   const [content, setContent] = useState('');
@@ -37,7 +37,7 @@ export function WorkspaceOpenProbe({host}: EditorHostProps) {
   };
   return <section aria-label="Workspace Open verification probe" style={{padding:16,display:'grid',gap:12}}>
     <h2>Workspace Open verification probe</h2>
-    <p>This is a private development-host test, not a released Terraphim feature.</p>
+    <p>This is a development-host verification fixture; not a released Terraphim feature.</p>
     {lifecycle.error && <p role="alert">{lifecycle.error.message}</p>}
     <label>Probe document buffer
       <textarea aria-label="Probe document buffer" value={content}

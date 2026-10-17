@@ -1,7 +1,7 @@
-import { jsxs as x, jsx as p } from "react/jsx-runtime";
+import { jsxs as h, jsx as p } from "react/jsx-runtime";
 import { useState as s, useRef as I, useCallback as O, useEffect as C } from "react";
 function W(e, l) {
-  const [w, D] = s(!0), [k, g] = s(null), [E, v] = s(!1), [L, R] = s(e.theme), [M, m] = s(null), [h, S] = s(e.isSourceModeActive?.() ?? !1), a = I(l);
+  const [w, D] = s(!0), [k, g] = s(null), [E, v] = s(!1), [x, R] = s(e.theme), [L, m] = s(null), [M, S] = s(e.isSourceModeActive?.() ?? !1), a = I(l);
   a.current = l;
   const o = I(""), y = I(!1), i = O(
     (r) => {
@@ -135,15 +135,15 @@ function W(e, l) {
     markDirty: c,
     isLoading: w,
     error: k,
-    theme: L,
+    theme: x,
     isDirty: E,
-    diffState: M,
+    diffState: L,
     toggleSourceMode: T,
-    isSourceMode: h
+    isSourceMode: M
   };
 }
 function A({ host: e }) {
-  const l = I(""), [w, D] = s(""), [k, g] = s(!1), [E, v] = s(null), [L, R] = s(null), [M, m] = s(null), [h, S] = s(null), [, a] = s(0), o = W(e, {
+  const l = I(""), [w, D] = s(""), [k, g] = s(!1), [E, v] = s(null), [x, R] = s(null), [L, m] = s(null), [M, S] = s(null), [, a] = s(0), o = W(e, {
     applyContent(c) {
       l.current = c, D(c);
     },
@@ -172,11 +172,11 @@ function A({ host: e }) {
       }
     }
   };
-  return /* @__PURE__ */ x("section", { "aria-label": "Workspace Open verification probe", style: { padding: 16, display: "grid", gap: 12 }, children: [
+  return /* @__PURE__ */ h("section", { "aria-label": "Workspace Open verification probe", style: { padding: 16, display: "grid", gap: 12 }, children: [
     /* @__PURE__ */ p("h2", { children: "Workspace Open verification probe" }),
-    /* @__PURE__ */ p("p", { children: "This is a private development-host test, not a released Terraphim feature." }),
+    /* @__PURE__ */ p("p", { children: "This is a development-host verification fixture; not a released Terraphim feature." }),
     o.error && /* @__PURE__ */ p("p", { role: "alert", children: o.error.message }),
-    /* @__PURE__ */ x("label", { children: [
+    /* @__PURE__ */ h("label", { children: [
       "Probe document buffer",
       /* @__PURE__ */ p(
         "textarea",
@@ -206,10 +206,10 @@ function A({ host: e }) {
     /* @__PURE__ */ p("button", { type: "button", onClick: () => a((c) => c + 1), children: "Refresh host and buffer readback" }),
     /* @__PURE__ */ p("pre", { "aria-label": "Actual probe readback", children: JSON.stringify({
       current: i(),
-      beforeOpen: M,
-      afterOpen: h,
+      beforeOpen: L,
+      afterOpen: M,
       outcome: E,
-      failure: L,
+      failure: x,
       nativeTabReadback: "Observe the actual host tab bar separately; no private tab-store access is used."
     }, null, 2) })
   ] });

@@ -24,18 +24,18 @@
     },
     {
       "path": "dist/index.js",
-      "bytes": 6738,
-      "sha256": "7ddb24ac8a3e41584b06fc8684159a879cee29c818db32b5655431e4ae829888"
+      "bytes": 6746,
+      "sha256": "8faffe7483ecc249d2c032f0288062ecece353de1a80967fc8aee2745468e761"
     },
     {
       "path": "dist/index.js.map",
-      "bytes": 23807,
-      "sha256": "cb33492c46062320bced853f655c6eafe07c75cf02de0ad4295fa9e49b1195d2"
+      "bytes": 23817,
+      "sha256": "86e4b6fd6a5c1c0bc501e478d2e58e9df978de728e4b41be455a15b47d1c5aa3"
     },
     {
       "path": "manifest.json",
-      "bytes": 541,
-      "sha256": "655a5a89ca3129b01ec25602ed32715b5fd54d902672cd8431b186cf9e10c013"
+      "bytes": 550,
+      "sha256": "d062238918ceebe63099e4ab168557324cfe20becc9e25b222acd6efaef42019"
     },
     {
       "path": "package.json",
@@ -45,12 +45,12 @@
     {
       "path": "provenance.json",
       "bytes": 875,
-      "sha256": "712cb6206c755da031470a2f69e801d0cc2f54871fdeed7fd14d8694f1f1e89c"
+      "sha256": "57f2d7caa772a67d4884ca5766906763768f539bf2f0268a3663828d3174afeb"
     },
     {
       "path": "src/index.tsx",
-      "bytes": 3196,
-      "sha256": "a664de984299aff1037aa955fe4a5b7a156828f5decfb7f7aaa242fc84553866"
+      "bytes": 3206,
+      "sha256": "4cddd7a00836b626771bbcf89bccf59bf9711c60a4fa329d3e7d4872e9a89587"
     },
     {
       "path": "tsconfig.json",
