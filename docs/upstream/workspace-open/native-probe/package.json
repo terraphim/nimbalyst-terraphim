@@ -1,0 +1,10 @@
+{
+  "name": "terraphim-native-open-verification-probe",
+  "version": "0.0.0-probe.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  }
+}

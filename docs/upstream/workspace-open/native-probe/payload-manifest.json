@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Exact prebuilt verification fixture; no native/install acceptance claimed",
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 30,
+      "sha256": "b78f5ed7f3b5c33f9eec047b8237d0e55567ac695cf6cfcdbb5d29d2744a0a9d"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1086,
+      "sha256": "9d00ed220e5f30cb5b8f2629c07fd9d03ed7785389aa34a55a5a8ca4a93bea47"
+    },
+    {
+      "path": "NIMBALYST-LICENSE.txt",
+      "bytes": 1076,
+      "sha256": "999b2e2de90cea0f48c54acfce3a1875cf05c814092008cb5bb0cf06a4ab7201"
+    },
+    {
+      "path": "README.md",
+      "bytes": 4325,
+      "sha256": "61507a103e43acc6da56995093b1ee6289032d98354b9b0a9aeac64e2959d73a"
+    },
+    {
+      "path": "dist/index.js",
+      "bytes": 6746,
+      "sha256": "8faffe7483ecc249d2c032f0288062ecece353de1a80967fc8aee2745468e761"
+    },
+    {
+      "path": "dist/index.js.map",
+      "bytes": 23817,
+      "sha256": "86e4b6fd6a5c1c0bc501e478d2e58e9df978de728e4b41be455a15b47d1c5aa3"
+    },
+    {
+      "path": "manifest.json",
+      "bytes": 550,
+      "sha256": "d062238918ceebe63099e4ab168557324cfe20becc9e25b222acd6efaef42019"
+    },
+    {
+      "path": "package.json",
+      "bytes": 205,
+      "sha256": "f15e06d659e791b23ace7eed1e8877b0247b2b6b477e58c0ed989ac4eb5727a5"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 875,
+      "sha256": "57f2d7caa772a67d4884ca5766906763768f539bf2f0268a3663828d3174afeb"
+    },
+    {
+      "path": "src/index.tsx",
+      "bytes": 3206,
+      "sha256": "4cddd7a00836b626771bbcf89bccf59bf9711c60a4fa329d3e7d4872e9a89587"
+    },
+    {
+      "path": "tsconfig.json",
+      "bytes": 289,
+      "sha256": "a2abdfe487517c010c5b6398c63b0e529ecdfb70da2f9d2e0d4d90fe12ed0aae"
+    },
+    {
+      "path": "vite.config.ts",
+      "bytes": 134,
+      "sha256": "c257215dfebb88d9d160ed6786bf38b1aac41ba5e8701561b9bd4ed7b99b3dcb"
+    }
+  ]
+}

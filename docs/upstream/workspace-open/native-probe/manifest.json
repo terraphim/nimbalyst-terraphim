@@ -1,0 +1,19 @@
+{
+  "id": "com.terraphim.verification.workspace-open",
+  "name": "Workspace Open verification probe",
+  "version": "0.0.0-probe.1",
+  "description": "Development-host verification fixture for proposed optional custom-editor workspace Open API; not a marketplace extension.",
+  "main": "dist/index.js",
+  "apiVersion": "1.0.0",
+  "contributions": {
+    "customEditors": [
+      {
+        "filePatterns": [
+          "*.open-probe"
+        ],
+        "displayName": "Workspace Open probe",
+        "component": "WorkspaceOpenProbe"
+      }
+    ]
+  }
+}

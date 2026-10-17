@@ -1,0 +1,22 @@
+{
+  "purpose": "Public verification fixture, not a released product/marketplace package",
+  "upstreamSource": "b5d994092c27ebe1f6a402c61351081b0dd52c56",
+  "reviewedPatchSha256": "09c211cbd4e7ce08a327c541b4fb18c9a5ab3ed4105618e96ae12d3d3b0b03cc",
+  "sdkPackageVersion": "0.7.1",
+  "sdkState": "Local patched upstream build; not an assertion of published API availability",
+  "sdkEditorTypesSha256": "498db79dadf0507ab3975665374f499b3246d2551790934a41d9337dcaf23f32",
+  "node": "24.22.0",
+  "vite": "7.3.6",
+  "typecheck": "PASS",
+  "actualSDKBundleValidation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "compiledComponentExports": "PASS",
+  "nativeInstall": "NOT_RUN",
+  "nativeChooser": "NOT_RUN",
+  "legalAcceptance": "NOT_PERFORMED",
+  "productRelease": "HELD",
+  "bundleSha256": "8faffe7483ecc249d2c032f0288062ecece353de1a80967fc8aee2745468e761"
+}
