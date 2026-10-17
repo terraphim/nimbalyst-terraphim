@@ -1,0 +1,16 @@
+{
+  "checkedAt": "2026-10-17T10:27:38.158680+00:00",
+  "actualSavedOutput": {
+    "path": "20-retained-recovered.saved.open-probe",
+    "bytes": 79,
+    "sha256": "960fef7397a1779cd77baddeb14077d0cd86e24a382c8d8696036bdd143b38ad"
+  },
+  "expectedVisibleBuffer": "Project brief: preserve this readonly disk baseline.\nUNSAVED_READONLY_SENTINEL\n",
+  "diskEqualsObservedBuffer": true,
+  "dirtyCleared": true,
+  "recoveryCause": "Normal host autosave persisted before the later explicit Cmd+S, after parent restored only owned directory/file permissions.",
+  "priorUnchangedDiskReceipts": [
+    "14-readonly-disk.json",
+    "18-retained-dirty-disk.json"
+  ]
+}
