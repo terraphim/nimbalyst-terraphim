@@ -1,0 +1,83 @@
+{
+  "verifiedOn": "2026-10-17",
+  "upstreamCommit": "b5d994092c27ebe1f6a402c61351081b0dd52c56",
+  "patchSha256": "09c211cbd4e7ce08a327c541b4fb18c9a5ab3ed4105618e96ae12d3d3b0b03cc",
+  "reviewedFilesUnchangedAfterFinalGate": true,
+  "focusedRealFilesystemTabStoreTests": 15,
+  "sdkBuild": "PASS",
+  "electronTypecheck": "PASS",
+  "changedModuleLint": "PASS for four modules; two baseline TabEditor missing-rule errors retained",
+  "finalSequentialGate": {
+    "command": "pnpm typecheck && pnpm test:prepush",
+    "exit": 0,
+    "loopbackPermitted": true,
+    "typecheck": {
+      "passedWorkspaces": 37,
+      "failedWorkspaces": 0,
+      "elapsedSeconds": 136.2
+    },
+    "prepush": {
+      "runId": "289e932a-99e7-4bd0-8533-90d4b29e0075",
+      "startedAt": "2026-10-17T09:23:16.848Z",
+      "finishedAt": "2026-10-17T09:31:36.191Z",
+      "counts": {
+        "passed": 17806,
+        "failed": 0,
+        "skipped": 30
+      },
+      "files": 2096,
+      "elapsedSeconds": 499.343
+    },
+    "warningsRetained": true,
+    "stdout": "final-sequential-gate.log"
+  },
+  "initialFullGate": {
+    "exit": 1,
+    "counts": {
+      "passed": 17756,
+      "failed": 50,
+      "skipped": 30
+    },
+    "files": 2096,
+    "elapsedSeconds": 736.873,
+    "errors": 23,
+    "state": "FAIL_RETAINED"
+  },
+  "boundedRecovery": {
+    "exit": 0,
+    "files": 10,
+    "passed": 135,
+    "failed": 0,
+    "skipped": 0,
+    "sandbox": "loopback permitted by escalated execution",
+    "sourceEdits": false,
+    "sameFailingFilesAsFullRun": true
+  },
+  "runtimeBuild": "PASS with preserved upstream warnings",
+  "nativeChooser": "NOT VERIFIED",
+  "upstreamAccepted": "NO",
+  "releasedHostSDKCapability": "NOT AVAILABLE in inspected app0.81.7/SDK0.7.1",
+  "terraphimThreeHostQualification": "NOT COMPLETE",
+  "signedOffBy": "NOT SUPPLIED",
+  "stdoutProvenance": {
+    "rawSha256": "d1303426b877d5fec130202e90518903cecc41969c9256d2b7ba99e010a60e19",
+    "publicSha256": "058ba3bcc462f932e8dd52905fa6e43ab91fbea1a53e3b9ae590a42a47ad0946",
+    "normalization": "Only disposable absolute checkout path replaced by $CHECKOUT; raw log remains in local execution evidence."
+  },
+  "cleanBasePatchApplication": {
+    "status": "PASS",
+    "files": 9,
+    "resultHashesMatchReviewedSource": true,
+    "newFiles": 2
+  },
+  "testedEnvironment": {
+    "node": "24.22.0",
+    "pnpm": "12.9.1"
+  },
+  "prerequisites": [
+    "pnpm install --frozen-lockfile (prepare hook runs build:tracker-packages)",
+    "pnpm --filter @nimbalyst/extension-sdk run build",
+    "pnpm --filter @nimbalyst/runtime run build",
+    "pnpm --dir packages/extensions/nimbalyst-memory/engine run build"
+  ]
+}
