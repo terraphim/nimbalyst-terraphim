@@ -1,0 +1,39 @@
+{
+  "files": [
+    {
+      "path": "NIMBALYST-LICENSE.txt",
+      "bytes": 1076,
+      "sha256": "999b2e2de90cea0f48c54acfce3a1875cf05c814092008cb5bb0cf06a4ab7201"
+    },
+    {
+      "path": "README.md",
+      "bytes": 5560,
+      "sha256": "0155b5a397e39742f0c5506e0daa6cb162b08b61d3bdd8ac191a30e8ae2981ff"
+    },
+    {
+      "path": "final-sequential-gate.log",
+      "bytes": 40816,
+      "sha256": "058ba3bcc462f932e8dd52905fa6e43ab91fbea1a53e3b9ae590a42a47ad0946"
+    },
+    {
+      "path": "focused-open.config.mts",
+      "bytes": 1101,
+      "sha256": "61dc66a24c9d4e5aca899fc965a71fc77b44eeffacb75eae70266769a611c7c4"
+    },
+    {
+      "path": "source.json",
+      "bytes": 2144,
+      "sha256": "4dc9a0285ff2b1565358c44af40ac072d5031588ec43183ae90a8d226b978b20"
+    },
+    {
+      "path": "verification.json",
+      "bytes": 2650,
+      "sha256": "b81004e2a486ce1becd2ba717541606186dd7ff0e117dba54475e792b4e2b35a"
+    },
+    {
+      "path": "workspace-open.patch",
+      "bytes": 25864,
+      "sha256": "09c211cbd4e7ce08a327c541b4fb18c9a5ab3ed4105618e96ae12d3d3b0b03cc"
+    }
+  ]
+}

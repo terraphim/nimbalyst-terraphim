@@ -1,0 +1,55 @@
+{
+  "source": "b5d994092c27ebe1f6a402c61351081b0dd52c56",
+  "releasedTag": "v0.81.7",
+  "releasedTagCommit": "4fc0ce0f4d41239b323cf6b478153f445a912d0e",
+  "originalPatchAppliedWithoutModification": true,
+  "files": [
+    {
+      "path": "docs/EXTENSION_ARCHITECTURE.md",
+      "bytes": 55330,
+      "sha256": "39621589eac0cd152ad328c9c05f70da244d1e52f9779ec1c2e4af57d44803f9"
+    },
+    {
+      "path": "docs/FEATURE_INVENTORY.md",
+      "bytes": 74785,
+      "sha256": "8fef9794febbbd9349520dd9c9418893b9010a5ffecb99c1c6ffdc299ebc42a7"
+    },
+    {
+      "path": "packages/collab-bundle/types/internal/extension-sdk/src/types/editor.d.ts",
+      "bytes": 39452,
+      "sha256": "37f5fb3dceaf47dbaaccbd9ee2e7413e780b5a4d64660349f31445b08667254a"
+    },
+    {
+      "path": "packages/electron/src/renderer/components/TabContent/TabContent.tsx",
+      "bytes": 36197,
+      "sha256": "fa7fbcb7ae11acd883483a35cfe86ef34cafdced0e133e7a256761781464c41b"
+    },
+    {
+      "path": "packages/electron/src/renderer/components/TabEditor/TabEditor.tsx",
+      "bytes": 170494,
+      "sha256": "7855843cc5206c32ade12813bb8697094bc73e1e7ed10cbfb1c6e72bc5ad2dd2"
+    },
+    {
+      "path": "packages/electron/src/renderer/components/TabEditor/createEditorHost.ts",
+      "bytes": 9808,
+      "sha256": "c1d4ce9b10991b41939e6c2491b39d8b2f162792522fa0fef7616a3f297cfcc1"
+    },
+    {
+      "path": "packages/electron/src/renderer/services/WorkspaceFileOpen.ts",
+      "bytes": 3695,
+      "sha256": "056fa1f00f5d10e075c5cb879f85f58135081b3e963a78b828b0a4d697edd127"
+    },
+    {
+      "path": "packages/electron/src/renderer/services/__tests__/WorkspaceFileOpen.test.tsx",
+      "bytes": 9987,
+      "sha256": "0d1650248b4101dba586c48f238b441f9ba11c5a7a64a6b1ab10544c2715acac"
+    },
+    {
+      "path": "packages/extension-sdk/src/types/editor.ts",
+      "bytes": 39845,
+      "sha256": "46036169be82779d4759bb3b4b69f24a50c8d7649ffa37261031cd01ffd6bd5d"
+    }
+  ],
+  "patchSha256": "09c211cbd4e7ce08a327c541b4fb18c9a5ab3ed4105618e96ae12d3d3b0b03cc",
+  "authorship": "Agent-prepared proposal for human review; no upstream commit or DCO sign-off supplied."
+}

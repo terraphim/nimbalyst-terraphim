@@ -1,0 +1,525 @@
+diff --git a/docs/EXTENSION_ARCHITECTURE.md b/docs/EXTENSION_ARCHITECTURE.md
+index 293b9a228..16ce5ca79 100644
+--- a/docs/EXTENSION_ARCHITECTURE.md
++++ b/docs/EXTENSION_ARCHITECTURE.md
+@@ -40,6 +40,24 @@ interface EditorHost {
+ 
+ This contract ensures that extensions integrate seamlessly with tabs, dirty indicators, file watching, and AI edit streaming regardless of the underlying editor technology.
+ 
++### Native workspace Open
++
++Desktop workspace tab hosts may expose `host.openWorkspaceFile()`. Check that
++method exists before offering the action: embedded, collaborative, virtual and
++older hosts do not provide it. It shows the existing native chooser and returns
++`{status: 'opened', filePath}`, `{status: 'cancelled'}`, or
++`{status: 'refused', reason}`. Open adds or activates a separate tab and retains
++all existing tab contents, including dirty buffers. Selecting an already-open
++file activates that tab without reloading it from disk.
++
++This capability accepts existing workspace text files within the project reader's
++4 MiB limit. The main process applies its existing sender-workspace and symlink
++containment checks; known binary formats, missing files and directories are
++refused. The originating tab must still be active in the same workspace after
++the chooser and file read. `opened` confirms tab state, not a disk save or the
++completion of the destination editor's initialization. Extensions must not call
++Electron IPC or browser file-import APIs to replace this capability.
++
+ ### Reporting the current selection to the chat
+ 
+ An editor can tell the AI chat what the user currently has selected. The chat renders each selection as a removable chip above the input, and includes the non-dismissed items' descriptions in the next prompt.
+diff --git a/docs/FEATURE_INVENTORY.md b/docs/FEATURE_INVENTORY.md
+index 328c9c22f..e2e4c595c 100644
+--- a/docs/FEATURE_INVENTORY.md
++++ b/docs/FEATURE_INVENTORY.md
+@@ -413,6 +413,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
+ 
+ - Manifest-based extension registration
+ - Custom editor contribution
++- Optional custom-editor workspace Open: native chooser adds or activates a workspace text-file tab while retaining existing dirty buffers; desktop workspace hosts only, with project filesystem containment and size limits.
+ - AI tool (MCP) contribution
+ - Document header contribution
+ - File icon contribution
+diff --git a/packages/collab-bundle/types/internal/extension-sdk/src/types/editor.d.ts b/packages/collab-bundle/types/internal/extension-sdk/src/types/editor.d.ts
+index cd35d311d..9a408f949 100644
+--- a/packages/collab-bundle/types/internal/extension-sdk/src/types/editor.d.ts
++++ b/packages/collab-bundle/types/internal/extension-sdk/src/types/editor.d.ts
+@@ -200,6 +200,16 @@ export interface RevisionSnapshotAdapter {
+      */
+     readonly previewKind?: 'text' | 'metadata-only';
+ }
++/** Outcome of the host's native workspace file chooser. */
++export type EditorWorkspaceFileOpenResult = {
++    status: 'opened';
++    filePath: string;
++} | {
++    status: 'cancelled';
++} | {
++    status: 'refused';
++    reason: string;
++};
+ /**
+  * A thing an editor might want to do that not every host can provide.
+  *
+@@ -566,6 +576,15 @@ export interface EditorHost {
+      * boundary; custom editors must not navigate the renderer directly.
+      */
+     openExternal?(url: string): Promise<void>;
++    /**
++     * Show the native chooser and add/activate an existing workspace text file in
++     * another tab. Retains existing tabs and their unsaved buffers; cancelling
++     * changes nothing. The host refuses files outside its authorized workspace,
++     * known binary formats and files exceeding the project reader's 4 MiB limit.
++     * `opened` confirms a tab, not a completed disk save or editor initialization.
++     * Optional: absent in embedded, virtual, collaborative and older hosts.
++     */
++    openWorkspaceFile?(): Promise<EditorWorkspaceFileOpenResult>;
+     /**
+      * A URL the renderer can load this document from directly, for editors whose
+      * element wants to fetch the bytes itself rather than be handed them.
+diff --git a/packages/electron/src/renderer/components/TabContent/TabContent.tsx b/packages/electron/src/renderer/components/TabContent/TabContent.tsx
+index fdc6732d3..08f5615e7 100644
+--- a/packages/electron/src/renderer/components/TabContent/TabContent.tsx
++++ b/packages/electron/src/renderer/components/TabContent/TabContent.tsx
+@@ -44,6 +44,7 @@ import { getPersistedCollabDocMetadata } from '../../utils/collabOpenDocsPersist
+ import { store, editorDirtyAtom, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
+ import { clearMockupAnnotationsForFile, getMockupFilePath } from '../UnifiedAI/MockupAnnotationIndicator';
+ import { resolveDesktopCollabScope } from '../../store/atoms/collabDocuments';
++import { createWorkspaceFileOpener } from '../../services/WorkspaceFileOpen';
+ 
+ interface TabContentProps {
+   textReplacements?: TextReplacement[];
+@@ -547,6 +548,18 @@ const TabContentComponent: React.FC<TabContentProps> = ({
+       return;
+     }
+ 
++    const ownerWorkspace = propsRef.current.workspaceId;
++    const openWorkspaceFile = ownerWorkspace && !isNonFilesystemTab(tab.filePath)
++      ? createWorkspaceFileOpener(ownerWorkspace, {
++        isCurrent: () => propsRef.current.workspaceId === ownerWorkspace &&
++          tabInstancesRef.current.get(tab.id)?.root === root &&
++          tabsActions.getSnapshot().activeTabId === tab.id &&
++          tabsActions.getTabState(tab.id)?.filePath === tab.filePath,
++        readFiles: paths => window.electronAPI.invoke('project-fs:read', paths),
++        tabs: tabsActions,
++      })
++      : undefined;
++
+     root.render(
+       <JotaiProvider store={store}>
+         <TabEditorErrorBoundary
+@@ -586,6 +599,7 @@ const TabContentComponent: React.FC<TabContentProps> = ({
+               onRenameDocument={propsRef.current.onRenameDocument}
+               onSwitchToAgentMode={propsRef.current.onSwitchToAgentMode}
+               onOpenSessionInChat={propsRef.current.onOpenSessionInChat}
++              onOpenWorkspaceFile={openWorkspaceFile}
+               workspaceId={propsRef.current.workspaceId}
+               // A file tab in the Wiki is a Local wiki page, never under review.
+               acceptAgentEdits={propsRef.current.trackerPageHeader}
+diff --git a/packages/electron/src/renderer/components/TabEditor/TabEditor.tsx b/packages/electron/src/renderer/components/TabEditor/TabEditor.tsx
+index 1ea3337d2..9ea4a3251 100644
+--- a/packages/electron/src/renderer/components/TabEditor/TabEditor.tsx
++++ b/packages/electron/src/renderer/components/TabEditor/TabEditor.tsx
+@@ -151,6 +151,7 @@ interface TabEditorProps {
+   onRenameDocument?: () => void;
+   onSwitchToAgentMode?: (planDocumentPath?: string, sessionId?: string) => void;
+   onOpenSessionInChat?: (sessionId: string) => void;
++  onOpenWorkspaceFile?: EditorHost['openWorkspaceFile'];
+ 
+   // Document metadata
+   workspaceId?: string;
+@@ -175,6 +176,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
+                                                       onRenameDocument,
+                                                       onSwitchToAgentMode,
+                                                       onOpenSessionInChat,
++                                                      onOpenWorkspaceFile,
+                                                       workspaceId,
+                                                       acceptAgentEdits = false,
+                                                     }) => {
+@@ -2912,6 +2914,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
+       },
+ 
+       ...(workspaceId && !filePath.startsWith('virtual://') ? {
++        openWorkspaceFile: onOpenWorkspaceFile,
+         fs: createProjectFileSystemHost({
+           onAfterWrite: refreshCurrentFileAfterProjectWrite,
+         }) satisfies EditorHostFileSystem,
+@@ -3150,7 +3153,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
+       },
+     });
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [filePath, fileName, workspaceId, extensionStorage, customEditorSupportsDiffMode]); // Recreate when file, workspace, storage, or diff support changes (theme accessed via themeRef)
++  }, [filePath, fileName, workspaceId, extensionStorage, customEditorSupportsDiffMode, onOpenWorkspaceFile]); // Recreate when file, workspace, storage, or diff support changes (theme accessed via themeRef)
+ 
+   // Clean up editor context when tab unmounts
+   useEffect(() => {
+diff --git a/packages/electron/src/renderer/components/TabEditor/createEditorHost.ts b/packages/electron/src/renderer/components/TabEditor/createEditorHost.ts
+index c8b72b0a7..3dda6caf4 100644
+--- a/packages/electron/src/renderer/components/TabEditor/createEditorHost.ts
++++ b/packages/electron/src/renderer/components/TabEditor/createEditorHost.ts
+@@ -78,6 +78,9 @@ export interface EditorHostOptions {
+   /** Open an already host-reviewed URL outside the renderer. */
+   openExternal?: (url: string) => Promise<void>;
+ 
++  /** Native chooser that retains the owning tab and its unsaved buffer. */
++  openWorkspaceFile?: EditorHost['openWorkspaceFile'];
++
+   /** Optional: Subscribe to diff requests */
+   subscribeToDiffRequests?: (
+     callback: (config: DiffConfig) => void
+@@ -200,6 +203,7 @@ export function createEditorHost(options: EditorHostOptions): EditorHost {
+     },
+ 
+     fs: options.fs,
++    openWorkspaceFile: options.openWorkspaceFile,
+ 
+     openExternal: options.openExternal
+       ? async (url: string): Promise<void> => {
+diff --git a/packages/electron/src/renderer/services/WorkspaceFileOpen.ts b/packages/electron/src/renderer/services/WorkspaceFileOpen.ts
+new file mode 100644
+index 000000000..2e63f70b6
+--- /dev/null
++++ b/packages/electron/src/renderer/services/WorkspaceFileOpen.ts
+@@ -0,0 +1,83 @@
++/** Native workspace Open for custom editor hosts; extensions never invoke IPC. */
++import type { EditorWorkspaceFileOpenResult, ProjectFileSnapshot } from '@nimbalyst/extension-sdk';
++import type { useTabsActions } from '../contexts/TabsContext';
++import { isBinaryFile } from '../utils/fileTypeDetector';
++
++type WorkspaceOpenTabs = Pick<ReturnType<typeof useTabsActions>, 'addTab' | 'getSnapshot'>;
++
++export interface WorkspaceFileOpenContext {
++  /** Must become false when the owning tab, editor instance or workspace changes. */
++  isCurrent(): boolean;
++  /** Main resolves the sender's workspace and validates containment; never a renderer path check. */
++  readFiles(paths: string[]): Promise<ProjectFileSnapshot[]>;
++  tabs: WorkspaceOpenTabs;
++}
++
++interface NativeFileSelection {
++  canceled: boolean;
++  filePaths: string[];
++}
++
++const unavailable = (): EditorWorkspaceFileOpenResult => ({
++  status: 'refused', reason: 'The workspace editor is no longer available.',
++});
++
++/**
++ * Complete a native selection using the existing authorized project reader and
++ * tab store. An opened result means the tab was actually added/activated, not
++ * merely that an IPC notification was sent. Existing tab content is retained.
++ */
++export async function openSelectedWorkspaceFile(
++  selection: NativeFileSelection,
++  context: WorkspaceFileOpenContext,
++): Promise<EditorWorkspaceFileOpenResult> {
++  if (!context.isCurrent()) return unavailable();
++  if (selection?.canceled === true) return { status: 'cancelled' };
++  if (selection?.canceled !== false || !Array.isArray(selection.filePaths) ||
++      selection.filePaths.length !== 1 || typeof selection.filePaths[0] !== 'string' ||
++      !selection.filePaths[0] || isBinaryFile(selection.filePaths[0])) {
++    return { status: 'refused', reason: 'Select one supported workspace text file.' };
++  }
++  try {
++    const snapshots = await context.readFiles(selection.filePaths);
++    if (!context.isCurrent()) return unavailable();
++    const snapshot = snapshots[0];
++    if (snapshots.length !== 1 || !snapshot?.exists || typeof snapshot.content !== 'string' ||
++        snapshot.content.includes('\0')) {
++      return { status: 'refused', reason: 'The selected file is unavailable or is not a text file.' };
++    }
++    // addTab activates an existing tab without replacing its content/dirty state.
++    const tabId = context.tabs.addTab(snapshot.path, snapshot.content);
++    const state = context.tabs.getSnapshot();
++    if (!tabId || state.activeTabId !== tabId || state.tabs.get(tabId)?.filePath !== snapshot.path) {
++      return { status: 'refused', reason: 'The selected file could not be opened in a tab.' };
++    }
++    return { status: 'opened', filePath: snapshot.path };
++  } catch {
++    return { status: 'refused', reason: 'The selected file could not be read inside this workspace.' };
++  }
++}
++
++/** Bind the existing native dialog to a single live editor instance. */
++export function createWorkspaceFileOpener(
++  workspacePath: string,
++  context: WorkspaceFileOpenContext,
++): () => Promise<EditorWorkspaceFileOpenResult> {
++  let pending = false;
++  return async () => {
++    if (!context.isCurrent() || !window.electronAPI?.openFileDialog) return unavailable();
++    if (pending) return { status: 'refused', reason: 'A file chooser is already open for this editor.' };
++    pending = true;
++    try {
++      const selection = await window.electronAPI.openFileDialog({
++        title: 'Open workspace file',
++        defaultPath: workspacePath,
++      });
++      return await openSelectedWorkspaceFile(selection, context);
++    } catch {
++      return { status: 'refused', reason: 'The native file chooser could not be opened.' };
++    } finally {
++      pending = false;
++    }
++  };
++}
+diff --git a/packages/electron/src/renderer/services/__tests__/WorkspaceFileOpen.test.tsx b/packages/electron/src/renderer/services/__tests__/WorkspaceFileOpen.test.tsx
+new file mode 100644
+index 000000000..957bed47b
+--- /dev/null
++++ b/packages/electron/src/renderer/services/__tests__/WorkspaceFileOpen.test.tsx
+@@ -0,0 +1,220 @@
++// @vitest-environment jsdom
++import { mkdtemp, realpath, writeFile, readFile, symlink, mkdir, rm, appendFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import path from 'node:path';
++import React from 'react';
++import { act, cleanup, renderHook } from '@testing-library/react';
++import { afterEach, beforeEach, describe, expect, it } from 'vitest';
++import { TabsProvider, useTabsActions } from '../../contexts/TabsContext';
++import { ProjectFileService } from '../../../main/services/ProjectFileService';
++import { createWorkspaceFileOpener, openSelectedWorkspaceFile, type WorkspaceFileOpenContext } from '../WorkspaceFileOpen';
++
++// Exercise the real tab store and filesystem reader. The native chooser's
++// returned selection is input, not evidence that an OS dialog was displayed.
++// No Electron/IPC or module mocks are installed by this focused test.
++let root: string;
++let outside: string;
++let source: string;
++let target: string;
++let files: ProjectFileService;
++
++function wrapper({ children }: { children: React.ReactNode }) {
++  return <TabsProvider workspacePath={null} disablePersistence>{children}</TabsProvider>;
++}
++
++beforeEach(async () => {
++  delete (window as unknown as { electronAPI?: unknown }).electronAPI;
++  root = await realpath(await mkdtemp(path.join(tmpdir(), 'workspace-open-')));
++  outside = await realpath(await mkdtemp(path.join(tmpdir(), 'workspace-outside-')));
++  source = path.join(root, 'draft.terraphim.md');
++  target = path.join(root, 'decision.terraphim.md');
++  await writeFile(source, 'saved original');
++  await writeFile(target, 'Risk is recorded here.');
++  files = new ProjectFileService({
++    async createSnapshot(filePath, content, type, description, metadata) {
++      await appendFile(path.join(root, 'history.jsonl'), JSON.stringify({ filePath, content, type, description, metadata }) + '\n');
++    },
++  }, () => false);
++});
++
++afterEach(async () => {
++  cleanup();
++  await Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]);
++});
++
++function origin() {
++  const { result } = renderHook(() => useTabsActions(), { wrapper });
++  let sourceId!: string;
++  act(() => {
++    sourceId = result.current.addTab(source, 'unsaved original')!;
++    result.current.updateTab(sourceId, { isDirty: true });
++  });
++  const context: WorkspaceFileOpenContext = {
++    isCurrent: () => result.current.getSnapshot().activeTabId === sourceId &&
++      result.current.getTabState(sourceId)?.filePath === source,
++    readFiles: paths => files.read(root, paths),
++    tabs: result.current,
++  };
++  return { context, tabs: result.current, sourceId };
++}
++
++async function choose(context: WorkspaceFileOpenContext, filePaths: string[], canceled = false) {
++  let outcome;
++  await act(async () => { outcome = await openSelectedWorkspaceFile({ canceled, filePaths }, context); });
++  return outcome;
++}
++
++describe('workspace Open selection', () => {
++  it('adds a real saved workspace file while retaining the dirty originating tab', async () => {
++    const { context, tabs, sourceId } = origin();
++    expect(await choose(context, [target])).toEqual({ status: 'opened', filePath: target });
++    const state = tabs.getSnapshot();
++    expect(state.tabs.size).toBe(2);
++    expect(tabs.getTabState(sourceId)).toMatchObject({ content: 'unsaved original', isDirty: true });
++    expect(state.tabs.get(state.activeTabId!)?.content).toBe(await readFile(target, 'utf8'));
++    expect(await readFile(source, 'utf8')).toBe('saved original');
++  });
++
++  it('activates an existing dirty target without replacing its unsaved buffer', async () => {
++    const { context, tabs, sourceId } = origin();
++    let targetId!: string;
++    act(() => {
++      targetId = tabs.addTab(target, 'unsaved target')!;
++      tabs.updateTab(targetId, { isDirty: true });
++      tabs.switchTab(sourceId);
++    });
++    expect(await choose(context, [target])).toEqual({ status: 'opened', filePath: target });
++    expect(tabs.getSnapshot().activeTabId).toBe(targetId);
++    expect(tabs.getTabState(targetId)).toMatchObject({ content: 'unsaved target', isDirty: true });
++    expect(tabs.getSnapshot().tabs.size).toBe(2);
++  });
++
++  it('cancels without changing tabs, dirty contents or disk', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    expect(await choose(context, [], true)).toEqual({ status: 'cancelled' });
++    expect(tabs.getSnapshot()).toBe(before);
++    expect(await readFile(source, 'utf8')).toBe('saved original');
++  });
++
++  it('refuses unsupported binary selections and malformed multi-file selections', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    const binary = path.join(root, 'archive.zip');
++    await writeFile(binary, Buffer.from([0, 1, 2]));
++    for (const selected of [[binary], [], [source, target]]) {
++      expect(await choose(context, selected)).toMatchObject({ status: 'refused' });
++      expect(tabs.getSnapshot()).toBe(before);
++    }
++  });
++
++  it('refuses outside-workspace paths and actual symlink escapes through the existing reader', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    const external = path.join(outside, 'external.md');
++    const alias = path.join(root, 'alias.md');
++    await writeFile(external, 'outside');
++    await symlink(external, alias);
++    for (const selected of [external, alias, path.relative(root, external)]) {
++      expect(await choose(context, [selected])).toMatchObject({ status: 'refused' });
++      expect(tabs.getSnapshot()).toBe(before);
++    }
++  });
++
++  it('refuses a missing file and a directory without reporting opened', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    const directory = path.join(root, 'folder.md');
++    await mkdir(directory);
++    for (const selected of [path.join(root, 'missing.md'), directory]) {
++      expect(await choose(context, [selected])).toMatchObject({ status: 'refused' });
++      expect(tabs.getSnapshot()).toBe(before);
++    }
++  });
++
++  it('refuses a closed origin and does not resurrect it', async () => {
++    const { context, tabs, sourceId } = origin();
++    act(() => tabs.removeTab(sourceId));
++    expect(await choose(context, [target])).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot().tabs.size).toBe(0);
++  });
++
++  it('rechecks origin lifetime after the actual asynchronous filesystem read', async () => {
++    const { context, tabs, sourceId } = origin();
++    let outcome;
++    await act(async () => {
++      const pending = openSelectedWorkspaceFile({ canceled: false, filePaths: [target] }, context);
++      tabs.removeTab(sourceId);
++      outcome = await pending;
++    });
++    expect(outcome).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot().tabs.size).toBe(0);
++  });
++
++  it('refuses the native wrapper when its host does not provide a chooser', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    expect(await createWorkspaceFileOpener(root, context)()).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot()).toBe(before);
++  });
++
++  it('refuses a hidden origin without switching away from the current tab', async () => {
++    const { context, tabs } = origin();
++    act(() => tabs.addTab(target, 'current target'));
++    const before = tabs.getSnapshot();
++    expect(await choose(context, [source])).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot()).toBe(before);
++  });
++
++  it('refuses NUL-containing data with a text suffix instead of opening a binary buffer', async () => {
++    const { context, tabs } = origin();
++    await writeFile(target, Buffer.from([82, 0, 105, 115, 107]));
++    const before = tabs.getSnapshot();
++    expect(await choose(context, [target])).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot()).toBe(before);
++  });
++
++  it('refuses a workspace lifetime change while the filesystem read is pending', async () => {
++    const { context, tabs } = origin();
++    const before = tabs.getSnapshot();
++    let currentWorkspace = root;
++    const originStillOpen = context.isCurrent;
++    context.isCurrent = () => currentWorkspace === root && originStillOpen();
++    let outcome;
++    await act(async () => {
++      const pending = openSelectedWorkspaceFile({ canceled: false, filePaths: [target] }, context);
++      currentWorkspace = outside;
++      outcome = await pending;
++    });
++    expect(outcome).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot()).toBe(before);
++  });
++
++  it('refuses an oversized actual file through the existing project read limit', async () => {
++    const { context, tabs } = origin();
++    await writeFile(target, 'x'.repeat(4 * 1024 * 1024 + 1));
++    expect(await choose(context, [target])).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot().tabs.size).toBe(1);
++  });
++
++  it('retains the same owner across same-path dirty tab updates', async () => {
++    const { context, tabs, sourceId } = origin();
++    act(() => tabs.updateTab(sourceId, { content: 'new unsaved text', isDirty: true }));
++    expect(await choose(context, [target])).toEqual({ status: 'opened', filePath: target });
++    expect(tabs.getTabState(sourceId)).toMatchObject({ content: 'new unsaved text', isDirty: true });
++    expect(await readFile(source, 'utf8')).toBe('saved original');
++  });
++
++  it('invalidates the old owner when its real tab is renamed during a pending read', async () => {
++    const { context, tabs, sourceId } = origin();
++    let outcome;
++    await act(async () => {
++      const pending = openSelectedWorkspaceFile({ canceled: false, filePaths: [target] }, context);
++      tabs.updateTab(sourceId, { filePath: path.join(root, 'renamed.terraphim.md') });
++      outcome = await pending;
++    });
++    expect(outcome).toMatchObject({ status: 'refused' });
++    expect(tabs.getSnapshot().tabs.size).toBe(1);
++    expect(tabs.getTabState(sourceId)).toMatchObject({ content: 'unsaved original', isDirty: true });
++  });
++});
+diff --git a/packages/extension-sdk/src/types/editor.ts b/packages/extension-sdk/src/types/editor.ts
+index 372373dda..227dca43c 100644
+--- a/packages/extension-sdk/src/types/editor.ts
++++ b/packages/extension-sdk/src/types/editor.ts
+@@ -215,6 +215,12 @@ export interface RevisionSnapshotAdapter {
+   readonly previewKind?: 'text' | 'metadata-only';
+ }
+ 
++/** Outcome of the host's native workspace file chooser. */
++export type EditorWorkspaceFileOpenResult =
++  | { status: 'opened'; filePath: string }
++  | { status: 'cancelled' }
++  | { status: 'refused'; reason: string };
++
+ // ============================================================================
+ // Host capability negotiation
+ // ============================================================================
+@@ -652,6 +658,16 @@ export interface EditorHost {
+    */
+   openExternal?(url: string): Promise<void>;
+ 
++  /**
++   * Show the native chooser and add/activate an existing workspace text file in
++   * another tab. Retains existing tabs and their unsaved buffers; cancelling
++   * changes nothing. The host refuses files outside its authorized workspace,
++   * known binary formats and files exceeding the project reader's 4 MiB limit.
++   * `opened` confirms a tab, not a completed disk save or editor initialization.
++   * Optional: absent in embedded, virtual, collaborative and older hosts.
++   */
++  openWorkspaceFile?(): Promise<EditorWorkspaceFileOpenResult>;
++
+   /**
+    * A URL the renderer can load this document from directly, for editors whose
+    * element wants to fetch the bytes itself rather than be handed them.
