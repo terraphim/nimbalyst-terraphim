@@ -1,0 +1,24 @@
+{
+  "scope": "Actual macOS0.81.7 development-host verification of proposed API only",
+  "upstreamSource": "b5d994092c27ebe1f6a402c61351081b0dd52c56",
+  "nineFilePatchSha256": "09c211cbd4e7ce08a327c541b4fb18c9a5ab3ed4105618e96ae12d3d3b0b03cc",
+  "fixtureSource": "a76c5340c406062bba09e141b256f935308a3649",
+  "fixtureID": "com.terraphim.verification.workspace-open",
+  "fixtureVersion": "0.0.0-probe.1",
+  "bundleSha256": "8faffe7483ecc249d2c032f0288062ecece353de1a80967fc8aee2745468e761",
+  "sdk": "Actual local patched0.7.1 build, not released API availability",
+  "installed13PublicFilesMatch": true,
+  "upstreamTypechecks": 37,
+  "upstreamTests": {
+    "pass": 17806,
+    "fail": 0,
+    "skip": 30
+  },
+  "fixturePRCI": 39023964751,
+  "fixtureMainCI": 39024402262,
+  "fixtureThreeOSComponentCI": "PASS; not native3OS acceptance",
+  "nativeCasesPassed": 11,
+  "originTabChangeWhileModalChooser": "NOT_RUN",
+  "productRelease": "HELD",
+  "DCOorUpstreamAcceptanceClaimed": false
+}
