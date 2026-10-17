@@ -12,6 +12,11 @@
       "sha256": "f598b1b716278569386067db0231e676abfa838c6df37c1404e58a9d1889dcc5"
     },
     {
+      "path": "10-origin-after-new-tab.png",
+      "bytes": 317878,
+      "sha256": "be545f2461d41e993bae9f1e10d9cf918c00e9b83018fd59b6dab063b07f9dbe"
+    },
+    {
       "path": "11-outside-refusal.png",
       "bytes": 315845,
       "sha256": "5c3a911162621a87fddfa26f807bef5416de2aa4adb4f68d6a6cae6f8503da0f"
@@ -73,8 +78,8 @@
     },
     {
       "path": "NATIVE-REPORT.md",
-      "bytes": 3723,
-      "sha256": "880176df0e87939a9d6c4f2bb6684ee987eee3c9d89e8c75d748bfdd64af472c"
+      "bytes": 3781,
+      "sha256": "a0783bdf9d937dc2c086236931dc38f20362c0dcee438d7f7d704b3dbb150dd1"
     },
     {
       "path": "README.md",
