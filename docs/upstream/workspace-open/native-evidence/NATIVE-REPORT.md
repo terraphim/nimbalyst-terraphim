@@ -4,7 +4,7 @@ The actual Nimbalyst 0.81.7 development host ran the reviewed nine-file proposal
 
 | Case | Actual result | Selected actual evidence |
 |---|---|---|
-| Optional public API and native chooser | PASS: visible Open button invokes the real native chooser. | [Native chooser](07-native-chooser.png) |
+| Optional public API and native chooser | PASS: visible Open button invokes the real native chooser. | Native chooser observed; [returned Cancel result](08-cancel-result-readable.png) |
 | Cancel, saved origin | PASS: cancelled outcome; original tab/buffer retained. Earlier sentinel had already autosaved, so this is explicitly a saved-origin case. | [Cancel](08-cancel-result-readable.png) |
 | New text tab | PASS: decision.md created/activated in actual host tab bar; original buffer retained on return. | [New tab](09-new-tab-opened.png) |
 | Outside-workspace input | PASS: selected owned external input refused; no tab added. | [Refusal](11-outside-refusal.png) |

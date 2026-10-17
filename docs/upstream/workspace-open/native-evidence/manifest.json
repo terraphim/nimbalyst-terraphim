@@ -2,11 +2,6 @@
   "scope": "Small public native verification evidence; unchanged selected original captures",
   "files": [
     {
-      "path": "07-native-chooser.png",
-      "bytes": 192813,
-      "sha256": "d8996b06667da653a83648d7c8254499d39f2664d2a1ef1d2c94b4e012cb35d2"
-    },
-    {
       "path": "08-cancel-result-readable.png",
       "bytes": 304246,
       "sha256": "fd1845217293e99fb5b51264b70603834435a75957aeb54dd465d8501b3a2229"
@@ -78,8 +73,8 @@
     },
     {
       "path": "NATIVE-REPORT.md",
-      "bytes": 3682,
-      "sha256": "178323cc1aac7bd8a3c93009e6a24a81376312ef7e8e9977aa3061370371c398"
+      "bytes": 3723,
+      "sha256": "880176df0e87939a9d6c4f2bb6684ee987eee3c9d89e8c75d748bfdd64af472c"
     },
     {
       "path": "README.md",
